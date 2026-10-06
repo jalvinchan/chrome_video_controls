@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Amplifier",
+  "version": "1.0.0",
+  "description": "Play the current tab louder. Audio stays in this browser.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "storage",
+    "activeTab"
+  ],
+  "background": {
+    "service_worker": "src/entrypoint/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Amplifier",
+    "default_popup": "src/presentation/popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}

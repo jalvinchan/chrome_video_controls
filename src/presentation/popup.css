@@ -1,0 +1,68 @@
+body { width: 300px; }
+
+.popup {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.popup-brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.popup-brand h1 {
+  margin: 0;
+  font-family: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.mark {
+  width: 28px;
+  height: 28px;
+  color: var(--brass);
+}
+
+.tab {
+  margin: 0;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.level {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.readout {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--brass);
+}
+
+.popup .primary { width: 100%; }
+
+.status,
+.note {
+  margin: 0;
+}
+
+.note {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
