@@ -8,6 +8,7 @@ A Chrome extension for local audio and standard HTML video controls.
 - Pitch-preserving video speed controls and keyboard shortcuts.
 - A–B repeat for loaded, seekable video.
 - Persistent timestamp bookmarks with optional notes.
+- Hold R for temporary acceleration; release to restore the previous rate.
 
 ## Install
 

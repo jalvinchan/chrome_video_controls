@@ -13,6 +13,7 @@
   let shownBookmarkKey = null;
   let loop = null;
   let loopError = null;
+  let acceleration = null;
   const mediaEvents = ["play", "playing", "pause", "timeupdate", "seeking", "seeked", "ended", "durationchange", "progress"];
   const normalize = (value) => {
     if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -25,7 +26,39 @@
     rates.set(video, rate);
     video.preservesPitch = true;
     video.defaultPlaybackRate = rate;
-    video.playbackRate = rate;
+    video.playbackRate = acceleration?.video === video ? Math.max(3, rate) : rate;
+  }
+
+  function stopAcceleration() {
+    if (!acceleration) return;
+    const video = acceleration.video;
+    acceleration = null;
+    apply(video);
+    notify();
+  }
+
+  function isTyping(event) {
+    return (event.composedPath?.() ?? [event.target]).some((element) =>
+      element?.isContentEditable || element?.matches?.("input, textarea, select, [role='textbox']"));
+  }
+
+  function onHoldKey(event) {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) {
+      stopAcceleration();
+      return;
+    }
+    if (event.code !== "KeyR" || event.repeat || event.defaultPrevented || isTyping(event)
+      || document.hidden || acceleration) return;
+    scan();
+    const video = primaryVideo();
+    if (!video || score(video) === 0 || video.readyState < 1 || video.ended) return;
+    // Keep the actual page speed as the baseline; the temporary rate never
+    // becomes the saved preference or leaks to another video.
+    rates.set(video, video.playbackRate);
+    acceleration = { video, source: sourceOf(video), url: document.URL };
+    apply(video);
+    event.preventDefault();
+    notify();
   }
 
   function scan() {
@@ -62,9 +95,9 @@
   function onSource(event) {
     // A new source uses the global preference. Resuming an existing video
     // keeps that tab's choice even if another tab has changed the preference.
-    apply(event.currentTarget, event.type === "loadedmetadata" ? desiredRate : rates.get(event.currentTarget));
     if (event.type === "loadedmetadata") onResetSource(event);
     else validateIdentity();
+    apply(event.currentTarget, event.type === "loadedmetadata" ? desiredRate : rates.get(event.currentTarget));
     if (event.type === "loadedmetadata") {
       rememberBookmarkSource(event.currentTarget);
       notify();
@@ -81,6 +114,8 @@
   }
 
   function validateIdentity() {
+    if (acceleration && (!acceleration.video.isConnected || acceleration.source !== sourceOf(acceleration.video)
+      || acceleration.url !== document.URL)) stopAcceleration();
     if (loop && (!loop.video.isConnected || loop.source !== sourceOf(loop.video)
       || loop.url !== document.URL)) clearLoop();
   }
@@ -102,6 +137,7 @@
   }
 
   function onResetSource(event) {
+    if (acceleration?.video === event.currentTarget) stopAcceleration();
     if (loop?.video === event.currentTarget) clearLoop();
     if (event.type !== "loadedmetadata") {
       bookmarkSources.delete(event.currentTarget);
@@ -326,6 +362,18 @@
     });
     observer.observe(document.documentElement, { childList: true, subtree: true,
       attributes: true, attributeFilter: ["src"] });
+    // Wait for the saved baseline before accepting a temporary override.
+    globalThis.addEventListener("keydown", onHoldKey);
+    globalThis.addEventListener("keyup", (event) => {
+      if (event.code === "KeyR") stopAcceleration();
+    }, true);
+    globalThis.addEventListener("blur", stopAcceleration);
+    globalThis.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopAcceleration();
+    }, true);
+    globalThis.addEventListener("focusin", (event) => {
+      if (isTyping(event)) stopAcceleration();
+    });
   });
   let chain = ready;
 
@@ -353,6 +401,7 @@
       if (message.type === "adjustRate" && (typeof message.delta !== "number" || !Number.isFinite(message.delta))) {
         throw new Error("Playback speed adjustment must be a finite number.");
       }
+      stopAcceleration();
       if (message.type === "resetControls") clearLoop();
       const rate = normalize(message.type === "resetControls" ? 1
         : message.type === "adjustRate" ? snapshot().rate + message.delta : message.rate);
@@ -386,6 +435,7 @@
   });
   for (const event of ["popstate", "hashchange", "pagehide"]) {
     globalThis.addEventListener(event, () => {
+      stopAcceleration();
       clearLoop();
       for (const video of tracked) bookmarkSources.delete(video);
       notify();

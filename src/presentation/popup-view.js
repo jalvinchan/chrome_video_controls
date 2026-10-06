@@ -144,7 +144,7 @@ export class PopupView {
       h("div", { class: "popup-brand" }, mark(), h("h1", {}, "Video Controls")),
       this.tab,
       h("section", { class: "control-section", "aria-label": "Video speed" },
-        h("h2", {}, "Speed"),
+        h("h2", { title: "Hold R on the video page for temporary 3× speed; release to restore." }, "Speed"),
         h("div", { class: "speed-heading" }, this.speedReadout, this.speedNumber),
         this.speedSlider,
         h("div", { class: "presets" }, this.speedPresets.map(({ button }) => button)),

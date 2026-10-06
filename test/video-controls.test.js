@@ -100,6 +100,12 @@ async function page(initial = {}, videos = [fakeVideo()]) {
   return {
     videos, stored, context, listeners, send, notifications, timers, animations,
     navigate: (event = "popstate") => navigation.get(event)(),
+    key(type, options = {}) {
+      const event = { code: "KeyR", preventDefault() { this.defaultPrevented = true; }, ...options };
+      navigation.get(type)(event);
+      return event;
+    },
+    fire: (type, event = {}) => navigation.get(type)(event),
     tick() { const callbacks = [...timers.values()]; timers.clear(); for (const callback of callbacks) callback(); },
     scan: () => observe([{ type: "childList" }]),
     changePreference: (rate) => changed({ playbackRate: { newValue: rate } }, "local"),
@@ -113,6 +119,134 @@ test("speed normalizes fine steps and rejects invalid input", () => {
   assert.equal(playbackRate(0), 0.25);
   assert.equal(playbackRate(100), 4);
   for (const value of [NaN, Infinity, "3", null]) assert.throws(() => playbackRate(value), /finite/);
+});
+
+test("holding R temporarily accelerates only the primary video and restores without saving", async () => {
+  const paused = fakeVideo({ width: 1920, paused: true });
+  const playing = fakeVideo();
+  const current = await page({ playbackRate: 1.5, sliderValue: 2 }, [paused, playing]);
+  current.notifications.length = 0;
+  const first = current.key("keydown");
+  assert.equal(first.defaultPrevented, true);
+  assert.equal(playing.playbackRate, 3);
+  assert.equal(playing.defaultPlaybackRate, 1.5);
+  assert.equal(paused.playbackRate, 1.5);
+  assert.equal(playing.preservesPitch, true);
+  assert.equal(playing.plays, 0);
+  assert.equal(playing.seeks, 0);
+  assert.equal((await current.send({ type: "snapshot" })).rate, 3);
+  current.key("keydown", { repeat: true });
+  playing.fire("play");
+  current.key("keyup", { target: { matches: () => true } });
+  assert.equal(playing.playbackRate, 1.5);
+  assert.deepEqual(current.stored, { playbackRate: 1.5, sliderValue: 2 });
+  assert.equal(current.notifications.length, 2);
+  current.key("keyup");
+  assert.equal(current.notifications.length, 2);
+});
+
+test("hold preserves pause, actual page speed, speeds above 3×, and other-tab preferences", async () => {
+  const video = fakeVideo({ paused: true });
+  const current = await page({ playbackRate: 1.5 }, [video]);
+  video.playbackRate = 2;
+  current.key("keydown");
+  current.changePreference(4);
+  current.key("keyup");
+  assert.equal(video.playbackRate, 2);
+  assert.equal(video.paused, true);
+  assert.equal(video.plays, 0);
+  await current.send({ type: "setRate", rate: 4 });
+  current.key("keydown");
+  assert.equal(video.playbackRate, 4);
+  current.key("keyup");
+  assert.equal(video.playbackRate, 4);
+});
+
+test("hold ignores typing, composition, modifiers, repeats, consumed keys, and other keys", async () => {
+  const current = await page({ playbackRate: 2 });
+  current.notifications.length = 0;
+  for (const options of [
+    { target: { matches: () => true } }, { target: { isContentEditable: true } },
+    { composedPath: () => [{}, { isContentEditable: true }] },
+    { isComposing: true }, { altKey: true }, { ctrlKey: true }, { metaKey: true },
+    { shiftKey: true }, { repeat: true }, { defaultPrevented: true }, { code: "KeyS" },
+  ]) {
+    current.key("keydown", options);
+    assert.equal(current.videos[0].playbackRate, 2);
+  }
+  current.context.document.hidden = true;
+  current.key("keydown");
+  assert.equal(current.videos[0].playbackRate, 2);
+  assert.equal(current.notifications.length, 0);
+});
+
+test("hold cancels on focus loss, hidden tabs, typing focus, and navigation", async () => {
+  for (const event of ["blur", "visibilitychange", "focusin", "pagehide", "popstate", "hashchange"]) {
+    const current = await page({ playbackRate: 1.5 });
+    current.key("keydown");
+    if (event === "visibilitychange") current.context.document.hidden = true;
+    current.fire(event, { target: { isContentEditable: true } });
+    assert.equal(current.videos[0].playbackRate, 1.5, event);
+    current.context.document.hidden = false;
+    current.key("keydown", { repeat: true });
+    assert.equal(current.videos[0].playbackRate, 1.5, "Repeat cannot restart a cancelled hold");
+  }
+});
+
+test("source changes and removed players cancel hold without accelerating replacements", async () => {
+  for (const event of ["loadstart", "emptied", "loadedmetadata", "source", "removed", "url"]) {
+    const current = await page({ playbackRate: 1.5 });
+    const video = current.videos[0];
+    current.key("keydown");
+    if (event === "source") video.currentSrc = "https://example.com/new.mp4";
+    else if (event === "removed") {
+      video.isConnected = false;
+      current.videos.splice(0, 1, fakeVideo());
+    } else if (event === "url") current.context.document.URL = "https://www.example.com/watch?v=2";
+    else video.fire(event);
+    current.scan();
+    assert.equal(video.playbackRate, 1.5, event);
+    assert.equal(current.videos[0].playbackRate, 1.5, event);
+  }
+  const noVideo = await page({}, []);
+  noVideo.key("keydown");
+});
+
+test("explicit speed operations cancel hold and adjust from the restored speed", async () => {
+  for (const message of [{ type: "setRate", rate: 2 }, { type: "adjustRate", delta: 0.25 }, { type: "resetControls" }]) {
+    const current = await page({ playbackRate: 1.5 });
+    current.key("keydown");
+    const state = await current.send(message);
+    const expected = message.type === "setRate" ? 2 : message.type === "adjustRate" ? 1.75 : 1;
+    assert.equal(state.rate, expected);
+    current.key("keyup");
+    assert.equal(current.videos[0].playbackRate, expected);
+    assert.equal(current.stored.playbackRate, expected);
+  }
+  const current = await page({ playbackRate: 1.5 });
+  current.key("keydown");
+  current.failSaving();
+  await assert.rejects(current.send({ type: "setRate", rate: 2 }), /Storage unavailable/);
+  current.key("keyup");
+  assert.equal(current.videos[0].playbackRate, 1.5);
+});
+
+test("holding R retains loop and bookmark context and reinjection adds no listeners", async () => {
+  const current = await page({ playbackRate: 1.5 });
+  const video = current.videos[0];
+  video.advance(1);
+  await current.send({ type: "setLoopA" });
+  video.advance(2);
+  const before = await current.send({ type: "setLoopB" });
+  current.key("keydown");
+  const during = await current.send({ type: "snapshot" });
+  assert.deepEqual(during.loop, before.loop);
+  assert.equal(during.bookmarkKey, before.bookmarkKey);
+  vm.runInContext(source, current.context);
+  current.key("keyup");
+  assert.equal(video.playbackRate, 1.5);
+  assert.equal(current.listeners.length, 1);
+  assert.equal((await current.send({ type: "snapshot" })).loop.active, true);
 });
 
 test("remembered speed and pitch survive new sources, replacement players, and reinjection", async () => {
@@ -208,6 +342,10 @@ test("speed commands reach the content script without touching audio capture", a
   });
   const audio = { start() { assert.fail("Speed must not capture audio"); } };
   await handleVideoCommand({ audio, video }, "speed-up", { id: 7 });
+  assert.deepEqual(calls[0].files, ["src/entrypoint/video.js"], "Deferred subtitle code is not injected");
+  const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url), "utf8"));
+  assert.equal(manifest.content_scripts, undefined, "Controls require an explicit toolbar action or shortcut");
+  assert.equal(manifest.host_permissions, undefined, "No persistent website access is requested");
   assert.equal(calls[1].delta, 0.25);
   assert.equal(calls[1].target, "video");
   await video.setRate(7, 3.12);

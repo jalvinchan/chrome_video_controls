@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Controls — bookmark check</title>
+<style>
+  body { max-width: 760px; margin: 40px auto; padding: 0 24px; font: 16px system-ui; }
+  video { width: 100%; background: #111; }
+  button { margin: 4px; padding: 8px 12px; }
+  output { display: block; margin: 16px 0; font-variant-numeric: tabular-nums; }
+</style>
+<h1>Bookmark check</h1>
+<p>This separate test page uses a public sample video from MDN. Open
+Video Controls from Chrome's toolbar to check bookmarks. Test notes are saved
+in the extension's local storage.</p>
+<video controls preload="auto"
+  src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"></video>
+<output id="state" aria-live="off">Loading video…</output>
+<div>
+  <button data-time="1">Seek to 1 second</button>
+  <button data-time="2">Seek to 2 seconds</button>
+  <button data-time="4">Seek to 4 seconds</button>
+  <button id="play">Play</button>
+  <button id="pause">Pause</button>
+</div>
+<p id="error" role="status"></p>
+<p><a href="?source=webm">Use the other media source</a> ·
+<a href="bookmarks.html">Return to the MP4 source</a></p>
+<p>Check notes after reopening controls and reloading this page. A bookmark
+jump should retain pause, speed, pitch, and volume. With A at 1 second and B
+at 2 seconds, jumping to 1 second keeps the loop and jumping to 4 clears it.
+The other source should have a separate bookmark list.</p>
+<script>
+  const video = document.querySelector('video');
+  const state = document.querySelector('#state');
+  const error = document.querySelector('#error');
+  if (new URL(location.href).searchParams.get('source') === 'webm') {
+    video.src = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.webm';
+  }
+  function update() {
+    const ranges = Array.from({ length: video.seekable.length }, (_, i) =>
+      `${video.seekable.start(i).toFixed(2)}–${video.seekable.end(i).toFixed(2)}`).join(', ');
+    state.textContent = `Time ${video.currentTime.toFixed(2)}s / ${video.duration.toFixed(2)}s · `
+      + `${video.paused ? 'Paused' : 'Playing'} · Speed ${video.playbackRate}× · `
+      + `Pitch preserved: ${video.preservesPitch} · Seekable: ${ranges || 'none'}`;
+  }
+  for (const event of ['loadedmetadata', 'timeupdate', 'ratechange', 'pause', 'play', 'seeked', 'progress']) {
+    video.addEventListener(event, update);
+  }
+  video.addEventListener('error', () => { error.textContent = 'The sample could not load. Check network access to MDN.'; });
+  for (const button of document.querySelectorAll('[data-time]')) {
+    button.addEventListener('click', () => { video.currentTime = Number(button.dataset.time); });
+  }
+  document.querySelector('#pause').addEventListener('click', () => video.pause());
+  document.querySelector('#play').addEventListener('click', () => {
+    video.play().catch((failure) => { error.textContent = failure.message; });
+  });
+</script>
+</html>
