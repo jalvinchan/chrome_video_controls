@@ -4,7 +4,8 @@ import { PopupView } from "../src/presentation/popup-view.js";
 
 function withDocument(run) {
   class Element {
-    constructor() {
+    constructor(tagName = "div") {
+      this.tagName = tagName;
       this.attributes = {};
       this.listeners = {};
       this.children = [];
@@ -21,8 +22,8 @@ function withDocument(run) {
   globalThis.Node = Element;
   globalThis.document = {
     activeElement: null,
-    createElement: () => new Element(),
-    createElementNS: () => new Element(),
+    createElement: (tagName) => new Element(tagName),
+    createElementNS: (_, tagName) => new Element(tagName),
     createTextNode: (text) => text,
   };
   try { run(new PopupView(new Element())); }
@@ -33,6 +34,52 @@ function withDocument(run) {
 }
 
 const idle = { live: false, sliderValue: 1, currentTabId: 7, currentTitle: "Video" };
+
+test("secondary controls use native disclosures and preserve expansion and drafts across refreshes", () => {
+  withDocument((view) => {
+    const state = { ...idle, video: { available: true, rate: 1, loop: { a: 10, b: 20, active: true } },
+      bookmarks: { key: "media:1", items: [{ id: "one", time: 15, note: "Study" }] } };
+    view.render(state);
+    const popup = view.root.children[0];
+    const loopSection = popup.children.find((node) => node.attributes?.["aria-label"] === "A–B repeat");
+    const bookmarkSection = popup.children.find((node) => node.attributes?.["aria-label"] === "Timestamp bookmarks");
+    const loopDetails = loopSection.children[0];
+    const bookmarkDetails = bookmarkSection.children[0];
+    const help = popup.children.at(-1);
+    for (const details of [loopDetails, bookmarkDetails, help]) {
+      assert.equal(details.tagName, "details");
+      assert.equal(details.attributes.open, undefined);
+      assert.equal(details.children[0].tagName, "summary");
+    }
+    assert.ok(loopDetails.children[0].children.includes(view.loopSummary));
+    assert.equal(view.loopSummary.textContent, "Looping");
+    assert.ok(bookmarkDetails.children[0].children.includes(view.bookmarkCount));
+    assert.equal(view.bookmarkCount.textContent, "1");
+    const helpText = help.children[1].children.map((node) => node.children.join(" ")).join(" ");
+    assert.match(helpText, /Hold R on the video page.*at least 3×.*Release R to restore/);
+    assert.match(helpText, /Alt \+ Shift.*On Mac, Alt is Option/);
+    assert.match(helpText, /Audio is not recorded/);
+
+    bookmarkDetails.open = true;
+    view.bookmarkNote.value = "Unfinished note";
+    view.update({ ...state, sliderValue: 2, video: { ...state.video, loop: { a: 10, b: null } },
+      bookmarks: { ...state.bookmarks, items: [] } });
+    assert.equal(bookmarkDetails.open, true);
+    assert.equal(view.bookmarkNote.value, "Unfinished note");
+    assert.equal(view.loopSummary.textContent, "A set");
+    assert.equal(view.bookmarkCount.textContent, "0");
+    assert.equal(view.bookmarkEmpty.hidden, false);
+
+    bookmarkDetails.open = false;
+    view.setBookmarkStatus({ message: "Couldn't save bookmark", tone: "error" });
+    view.setLoopStatus({ message: "B must be after A", tone: "error" });
+    assert.ok(bookmarkSection.children.includes(view.bookmarkStatus));
+    assert.ok(loopSection.children.includes(view.loopStatus));
+    assert.equal(view.bookmarkStatus.hidden, false);
+    assert.equal(view.loopStatus.hidden, false);
+    assert.equal(bookmarkDetails.open, false);
+  });
+});
 
 test("popup exposes the new range and labels every step in decibels or mute", () => {
   withDocument((view) => {
@@ -241,7 +288,8 @@ test("bookmarks render notes safely, keep drafts across refreshes, and route jum
     assert.equal(view.bookmarkNote.value, "My draft");
     view.update({ ...state, bookmarks: { key: "media:2", items: [] } });
     assert.equal(view.bookmarkNote.value, "");
-    assert.equal(view.bookmarkStatus.textContent, "No bookmarks yet.");
+    assert.equal(view.bookmarkEmpty.textContent, "No bookmarks yet.");
+    assert.equal(view.bookmarkStatus.hidden, true);
     view.update({ ...state, bookmarks: { key: null, items: [] } });
     assert.equal(view.bookmarkSave.disabled, true);
     assert.equal(view.bookmarkNote.disabled, true);

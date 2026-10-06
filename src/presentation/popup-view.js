@@ -108,6 +108,7 @@ export class PopupView {
       this.onRefresh();
     });
     this.loopReadout = h("p", { class: "loop-readout", role: "status", "aria-live": "polite" });
+    this.loopSummary = h("span", { class: "section-summary", role: "status", "aria-live": "polite" });
     this.loopStatus = h("p", { class: "note", role: "status", "aria-live": "polite" });
     this.loopButtons = [
       ["setLoopA", "Set A"], ["setLoopB", "Set B"], ["clearLoop", "Clear loop"],
@@ -129,6 +130,8 @@ export class PopupView {
       }
     });
     this.bookmarkList = h("ul", { class: "bookmark-list", "aria-label": "Saved timestamps" });
+    this.bookmarkCount = h("span", { class: "section-summary" });
+    this.bookmarkEmpty = h("p", { class: "note" });
     this.bookmarkStatus = h("p", { class: "note", role: "status", "aria-live": "polite" });
     this.resetButton = h("button", { type: "button", title: "Reset speed to 1×, gain to 0 dB, and clear the loop" }, "Reset controls");
     this.resetButton.addEventListener("click", () => this.onReset());
@@ -141,34 +144,48 @@ export class PopupView {
     this.button.addEventListener("click", () => this.onToggle());
 
     this.root.replaceChildren(h("div", { class: "popup" },
-      h("div", { class: "popup-brand" }, mark(), h("h1", {}, "Video Controls")),
-      this.tab,
+      h("div", { class: "popup-brand" }, mark(), h("h1", {}, "Video Controls"), this.tab),
       h("section", { class: "control-section", "aria-label": "Video speed" },
-        h("h2", { title: "Hold R on the video page for temporary 3× speed; release to restore." }, "Speed"),
-        h("div", { class: "speed-heading" }, this.speedReadout, this.speedNumber),
-        this.speedSlider,
+        h("div", { class: "control-heading" }, h("h2", {}, "Speed"), this.speedReadout),
+        h("div", { class: "control-row" }, this.speedSlider, this.speedNumber),
         h("div", { class: "presets" }, this.speedPresets.map(({ button }) => button)),
         this.speedStatus,
       ),
-      h("h2", {}, "Volume boost"),
-      h("div", { class: "level" }, this.readout, this.slider),
-      this.button,
-      this.status,
+      h("section", { class: "control-section", "aria-label": "Volume boost" },
+        h("div", { class: "control-heading" }, h("h2", {}, "Volume boost"), this.readout),
+        h("div", { class: "control-row" }, this.slider, this.button),
+        this.status,
+      ),
       h("section", { class: "control-section", "aria-label": "A–B repeat" },
-        h("h2", {}, "A–B repeat"),
-        this.loopReadout,
-        h("div", { class: "loop-actions" }, this.loopButtons.map(({ button }) => button)),
+        h("details", { class: "disclosure" },
+          h("summary", {}, h("h2", {}, "A–B repeat"), this.loopSummary),
+          h("div", { class: "disclosure-content" },
+            this.loopReadout,
+            h("div", { class: "loop-actions" }, this.loopButtons.map(({ button }) => button)),
+          ),
+        ),
         this.loopStatus,
       ),
       h("section", { class: "control-section", "aria-label": "Timestamp bookmarks" },
-        h("h2", {}, "Bookmarks"),
-        h("div", { class: "bookmark-entry" }, this.bookmarkNote, this.bookmarkSave),
-        this.bookmarkList,
+        h("details", { class: "disclosure" },
+          h("summary", {}, h("h2", {}, "Bookmarks"), this.bookmarkCount),
+          h("div", { class: "disclosure-content" },
+            h("div", { class: "bookmark-entry" }, this.bookmarkNote, this.bookmarkSave),
+            this.bookmarkList,
+            this.bookmarkEmpty,
+          ),
+        ),
         this.bookmarkStatus,
       ),
       h("div", { class: "footer-actions" }, this.resetButton, shortcutsButton),
-      h("p", { class: "note" }, "Speed: Alt + Shift + ← / →. Volume: Alt + Shift + ↓ / ↑. On Mac, Alt is Option."),
-      h("p", { class: "note" }, "Chrome shows a sharing indicator while a tab is amplified. Audio is not recorded."),
+      h("details", { class: "disclosure" },
+        h("summary", {}, h("h2", {}, "Help & tips")),
+        h("div", { class: "disclosure-content" },
+          h("p", { class: "note" }, "Hold R on the video page to temporarily increase playback to at least 3× speed. Release R to restore your previous speed."),
+          h("p", { class: "note" }, "Speed: Alt + Shift + ← / →. Volume: Alt + Shift + ↓ / ↑. On Mac, Alt is Option. Use Shortcuts to customize these keys."),
+          h("p", { class: "note" }, "Chrome shows a sharing indicator while a tab is amplified. Audio is not recorded."),
+        ),
+      ),
     ));
     this.update(state);
   }
@@ -184,6 +201,7 @@ export class PopupView {
     this.state = state;
     if (!this.slider) return;
     this.tab.textContent = state.currentTitle || "This tab";
+    this.tab.title = this.tab.textContent;
     if (!this.dragging.has(this.slider)) this.slider.value = String(state.sliderValue);
     this.#paintLevel();
     const video = state.video ?? { rate: DEFAULT_RATE, available: false };
@@ -262,6 +280,8 @@ export class PopupView {
     const loop = video?.loop ?? {};
     this.loopReadout.textContent = `A ${timestamp(loop.a)} · B ${timestamp(loop.b)}${loop.active ? " · Looping" : ""}`;
     this.loopReadout.dataset.active = String(Boolean(loop.active));
+    this.loopSummary.textContent = loop.active ? "Looping" : loop.a != null ? "A set" : "";
+    this.loopSummary.dataset.active = String(Boolean(loop.active));
     for (const { action, button } of this.loopButtons) {
       button.disabled = this.busy || Boolean(video?.error) || !video?.available
         || (action === "setLoopB" && loop.a == null)
@@ -275,6 +295,8 @@ export class PopupView {
   #paintBookmarks() {
     if (!this.bookmarkList || !this.state) return;
     const { key, items = [], error } = this.state.bookmarks ?? {};
+    this.bookmarkCount.textContent = String(items.length);
+    this.bookmarkCount.setAttribute("aria-label", `${items.length} saved bookmarks`);
     const signature = JSON.stringify([key, items]);
     // Keep focused timestamp/remove buttons in place during unrelated refreshes.
     if (signature !== this.bookmarkSignature) {
@@ -299,9 +321,11 @@ export class PopupView {
     this.bookmarkNote.disabled = !key;
     for (const button of this.bookmarkButtons) button.disabled = this.bookmarkBusy;
     const message = this.bookmarkStatusMessage?.message || error;
-    this.bookmarkStatus.textContent = message || (!key
+    this.bookmarkStatus.textContent = message || "";
+    this.bookmarkEmpty.textContent = !key
       ? (this.state.video?.available ? "Bookmarks need a loaded video with a stable address." : "No video found.")
-      : items.length ? "" : "No bookmarks yet.");
+      : items.length ? "" : "No bookmarks yet.";
+    this.bookmarkEmpty.hidden = Boolean(message) || !this.bookmarkEmpty.textContent;
     this.bookmarkStatus.dataset.tone = message ? "error" : "";
     this.bookmarkStatus.hidden = !this.bookmarkStatus.textContent;
   }

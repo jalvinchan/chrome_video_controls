@@ -9,6 +9,7 @@ A Chrome extension for local audio and standard HTML video controls.
 - A–B repeat for loaded, seekable video.
 - Persistent timestamp bookmarks with optional notes.
 - Hold R for temporary acceleration; release to restore the previous rate.
+- A compact popup with expandable secondary controls.
 
 ## Install
 
