@@ -9,6 +9,9 @@
   let preferenceVersion = 0;
   const tracked = new Set();
   const rates = new WeakMap();
+  let loop = null;
+  let loopError = null;
+  const mediaEvents = ["play", "playing", "pause", "timeupdate", "seeking", "seeked", "ended", "durationchange", "progress"];
   const normalize = (value) => {
     if (typeof value !== "number" || !Number.isFinite(value)) {
       throw new Error("Playback speed must be a finite number.");
@@ -26,8 +29,12 @@
   function scan() {
     for (const video of tracked) {
       if (!video.isConnected) {
+        if (loop?.video === video) clearLoop();
         video.removeEventListener("loadedmetadata", onSource);
         video.removeEventListener("play", onSource);
+        video.removeEventListener("emptied", onResetSource);
+        video.removeEventListener("loadstart", onResetSource);
+        for (const event of mediaEvents) video.removeEventListener(event, onMedia);
         tracked.delete(video);
       }
     }
@@ -36,14 +43,161 @@
       tracked.add(video);
       video.addEventListener("loadedmetadata", onSource);
       video.addEventListener("play", onSource);
+      video.addEventListener("emptied", onResetSource);
+      video.addEventListener("loadstart", onResetSource);
+      for (const event of mediaEvents) video.addEventListener(event, onMedia);
       apply(video);
     }
+    validateIdentity();
   }
 
   function onSource(event) {
     // A new source uses the global preference. Resuming an existing video
     // keeps that tab's choice even if another tab has changed the preference.
     apply(event.currentTarget, event.type === "loadedmetadata" ? desiredRate : rates.get(event.currentTarget));
+    if (event.type === "loadedmetadata") onResetSource(event);
+    else validateIdentity();
+  }
+
+  function notify() {
+    // Endpoint/source changes are infrequent. Never store or broadcast frames.
+    chrome.runtime.sendMessage({ type: "videoControlsChanged" }).catch(() => {});
+  }
+
+  function sourceOf(video) {
+    return `${video.currentSrc || ""}\n${video.getAttribute?.("src") || ""}`;
+  }
+
+  function validateIdentity() {
+    if (loop && (!loop.video.isConnected || loop.source !== sourceOf(loop.video)
+      || loop.url !== document.URL)) clearLoop();
+  }
+
+  function cancelChecks() {
+    if (!loop) return;
+    if (loop.frame != null) loop.video.cancelVideoFrameCallback?.(loop.frame);
+    if (loop.animation != null) cancelAnimationFrame(loop.animation);
+    if (loop.timer != null) clearTimeout(loop.timer);
+    loop.frame = loop.animation = loop.timer = null;
+  }
+
+  function clearLoop(error = null) {
+    const changed = Boolean(loop) || loopError !== error;
+    cancelChecks();
+    loop = null;
+    loopError = error;
+    if (changed) notify();
+  }
+
+  function onResetSource(event) {
+    if (loop?.video === event.currentTarget) clearLoop();
+  }
+
+  function seekRange(video, a, b = a) {
+    if (!Number.isFinite(video.duration) || video.duration <= 0) {
+      throw new Error("A–B repeat needs a loaded on-demand video; live streams aren't supported.");
+    }
+    if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b > video.duration) {
+      throw new Error("Choose A and B within the video's duration.");
+    }
+    const ranges = video.seekable;
+    for (let i = 0; i < (ranges?.length ?? 0); i += 1) {
+      if (a >= ranges.start(i) && b <= ranges.end(i)) return;
+    }
+    throw new Error("That section isn't seekable yet. Wait for the video to load, then set the points again.");
+  }
+
+  function setPoint(point) {
+    const video = primaryVideo();
+    if (!video) throw new Error("No video found. Open a video, then set a loop point.");
+    if (video.seeking) throw new Error("Wait for the current seek to finish, then set the point again.");
+    const time = video.currentTime;
+    if (point === "b") {
+      if (loop?.video !== video || loop.a == null) throw new Error("Set A before setting B.");
+      if (time <= loop.a) throw new Error("B must be after A. Move forward in the video, then set B.");
+      seekRange(video, loop.a, time);
+    } else seekRange(video, time);
+    // Setting A starts a new selection. Failed selections keep the old loop.
+    if (point === "a") {
+      clearLoop();
+      loop = { video, source: sourceOf(video), url: document.URL, a: time, b: null,
+        seeking: false, wasPlaying: !video.paused && !video.ended };
+    } else loop.b = time;
+    loopError = null;
+    notify();
+    scheduleChecks();
+    return snapshot();
+  }
+
+  function checkBoundary() {
+    validateIdentity();
+    const current = loop;
+    if (!current || current.b == null) return;
+    const video = current.video;
+    try { seekRange(video, current.a, current.b); }
+    catch (error) { clearLoop(error.message); return; }
+    if (video.paused || video.ended || video.seeking || current.seeking) return;
+    if (video.currentTime >= current.b) {
+      current.seeking = true;
+      try { video.currentTime = current.a; }
+      catch { clearLoop("Couldn't seek to A. Clear the loop and try again."); }
+    }
+  }
+
+  function scheduleChecks() {
+    if (!loop || loop.b == null || loop.video.paused || loop.video.ended) return;
+    const current = loop;
+    const frame = () => {
+      if (loop !== current) return;
+      current.frame = current.animation = null;
+      checkBoundary();
+      scheduleChecks();
+    };
+    if (current.frame == null && current.animation == null) {
+      if (typeof current.video.requestVideoFrameCallback === "function") {
+        current.frame = current.video.requestVideoFrameCallback(frame);
+      } else current.animation = requestAnimationFrame(frame);
+    }
+    // Frame callbacks may stop in hidden tabs. timeupdate and this watchdog
+    // provide best-effort checks there, subject to browser timer throttling.
+    if (current.timer == null) current.timer = setTimeout(() => {
+      if (loop !== current) return;
+      current.timer = null;
+      checkBoundary();
+      scheduleChecks();
+    }, 50);
+  }
+
+  function onMedia(event) {
+    validateIdentity();
+    const current = loop;
+    if (!current || current.video !== event.currentTarget) return;
+    const video = current.video;
+    if (event.type === "seeked") current.seeking = false;
+    if (event.type === "play" || event.type === "playing") current.wasPlaying = true;
+    if (event.type === "pause") {
+      // An ended video pauses automatically; only resume that case, never an
+      // explicit pause. Marking endpoints itself never calls play().
+      if (!video.ended) current.wasPlaying = false;
+      cancelChecks();
+      return;
+    }
+    if (event.type === "ended") {
+      cancelChecks();
+      if (current.b != null && current.wasPlaying && !current.seeking) {
+        try {
+          seekRange(video, current.a, current.b);
+          current.seeking = true;
+          video.currentTime = current.a;
+          video.play().catch(() => {
+            if (loop === current) clearLoop("Playback stopped. Start the video and set the loop again.");
+          });
+        } catch (error) { clearLoop(error.message); }
+      }
+      return;
+    }
+    checkBoundary();
+    scheduleChecks();
   }
 
   function primaryVideo() {
@@ -58,8 +212,13 @@
   }
 
   function snapshot() {
+    validateIdentity();
     const video = primaryVideo();
-    return { available: Boolean(video), rate: video?.playbackRate ?? desiredRate, savedRate: desiredRate };
+    const selected = loop?.video === video ? loop : null;
+    return { available: Boolean(video), rate: video?.playbackRate ?? desiredRate, savedRate: desiredRate,
+      currentTime: video?.currentTime ?? null,
+      loop: { a: selected?.a ?? null, b: selected?.b ?? null, active: selected?.b != null,
+        error: loopError } };
   }
 
   const ready = chrome.storage.local.get(storageKey).then((stored) => {
@@ -67,8 +226,12 @@
       desiredRate = normalize(stored[storageKey]);
     }
     scan();
-    const observer = new MutationObserver(scan);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    const observer = new MutationObserver((records) => {
+      // Ignore unrelated class changes across the page (e.g. caption styling).
+      if (records.some((record) => record.type === "childList" || record.attributeName === "src")) scan();
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true,
+      attributes: true, attributeFilter: ["src"] });
   });
   let chain = ready;
 
@@ -85,13 +248,18 @@
     const operation = chain.then(async () => {
       scan();
       if (message.type === "snapshot") return snapshot();
-      if (message.type !== "setRate" && message.type !== "adjustRate") {
+      if (message.type === "setLoopA") return setPoint("a");
+      if (message.type === "setLoopB") return setPoint("b");
+      if (message.type === "clearLoop") { clearLoop(); return snapshot(); }
+      if (message.type !== "setRate" && message.type !== "adjustRate" && message.type !== "resetControls") {
         throw new Error("Unknown video control.");
       }
       if (message.type === "adjustRate" && (typeof message.delta !== "number" || !Number.isFinite(message.delta))) {
         throw new Error("Playback speed adjustment must be a finite number.");
       }
-      const rate = normalize(message.type === "adjustRate" ? snapshot().rate + message.delta : message.rate);
+      if (message.type === "resetControls") clearLoop();
+      const rate = normalize(message.type === "resetControls" ? 1
+        : message.type === "adjustRate" ? snapshot().rate + message.delta : message.rate);
       const previousRate = desiredRate;
       const previousVideos = [...tracked].map((video) => ({
         video, rate: video.playbackRate, defaultRate: video.defaultPlaybackRate,
@@ -120,5 +288,8 @@
     );
     return true;
   });
+  for (const event of ["popstate", "hashchange", "pagehide"]) {
+    globalThis.addEventListener(event, () => clearLoop());
+  }
   ready.catch((error) => console.error("Video controls:", error));
 })();

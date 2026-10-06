@@ -145,3 +145,67 @@ test("warnings and errors remain visible when routine status text is hidden", ()
     assert.match(view.status.textContent, /Another video/);
   });
 });
+
+test("loop controls show endpoints, active state, and actionable errors", () => {
+  withDocument((view) => {
+    const actions = [];
+    view.render({ ...idle, video: { available: true, rate: 3, loop: { a: null, b: null, active: false } } });
+    view.bind({ onLoop: (action) => actions.push(action) });
+    assert.equal(view.loopReadout.textContent, "A — · B —");
+    assert.equal(view.loopButtons[0].button.disabled, false);
+    assert.equal(view.loopButtons[1].button.disabled, true);
+    assert.equal(view.loopButtons[2].button.disabled, true);
+    view.loopButtons[0].button.listeners.click();
+    view.update({ ...idle, video: { available: true, rate: 3, loop: { a: 10.25, b: null, active: false } } });
+    assert.equal(view.loopReadout.textContent, "A 0:10.25 · B —");
+    assert.equal(view.loopButtons[1].button.disabled, false);
+    view.loopButtons[1].button.listeners.click();
+    view.update({ ...idle, video: { available: true, rate: 3, loop: { a: 10.25, b: 65.5, active: true } } });
+    assert.equal(view.loopReadout.textContent, "A 0:10.25 · B 1:05.50 · Looping");
+    assert.equal(view.loopReadout.dataset.active, "true");
+    view.loopButtons[2].button.listeners.click();
+    assert.deepEqual(actions, ["setLoopA", "setLoopB", "clearLoop"]);
+    view.setBusy(true);
+    assert.ok(view.loopButtons.every(({ button }) => button.disabled));
+    view.setBusy(false);
+    view.update({ ...idle, video: { available: true, rate: 1, loop: { error: "Section isn't seekable" } } });
+    assert.equal(view.loopStatus.hidden, false);
+    assert.match(view.loopStatus.textContent, /seekable/);
+    assert.equal(view.loopButtons[2].button.disabled, false);
+    view.update({ ...idle, video: { available: false, rate: 1 } });
+    assert.ok(view.loopButtons.every(({ button }) => button.disabled));
+    assert.equal(view.loopStatus.hidden, true);
+    assert.match(view.resetButton.attributes.title, /clear the loop/);
+  });
+});
+
+test("invalid loop actions show errors in A–B repeat and preserve volume status", () => {
+  withDocument((view) => {
+    const state = { ...idle, live: true, tabId: 8, title: "Another video",
+      video: { available: true, rate: 1, loop: { a: 10, b: null } } };
+    view.render(state);
+    const volumeStatus = view.status.textContent;
+    const message = "B must be after A. Move forward in the video, then set B.";
+    view.setLoopStatus({ message, tone: "error" });
+    view.setBusy(false);
+    view.update({ ...state, sliderValue: 2 });
+    assert.equal(view.loopStatus.textContent, message);
+    assert.equal(view.loopStatus.hidden, false);
+    assert.equal(view.loopStatus.dataset.tone, "error");
+    assert.match(view.status.textContent, /Another video/);
+    assert.notEqual(view.status.textContent, message);
+    const popup = view.root.children[0];
+    const loopSection = popup.children.find((child) => child.attributes?.["aria-label"] === "A–B repeat");
+    assert.ok(loopSection.children.includes(view.loopStatus));
+    assert.ok(!loopSection.children.includes(view.status));
+    assert.ok(volumeStatus);
+    view.setLoopStatus(null);
+    assert.equal(view.loopStatus.hidden, true);
+    view.setLoopStatus({ message, tone: "error" });
+    view.update({ ...state, video: { ...state.video, loop: { a: 10, b: 15, active: true } } });
+    assert.equal(view.loopStatus.hidden, true);
+    view.setLoopStatus({ message, tone: "error" });
+    view.update({ ...state, currentTabId: 9 });
+    assert.equal(view.loopStatus.hidden, true);
+  });
+});

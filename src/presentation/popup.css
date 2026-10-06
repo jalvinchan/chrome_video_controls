@@ -52,7 +52,12 @@ body { width: 340px; }
 }
 
 .presets,
+.loop-actions,
 .footer-actions { display: flex; gap: 6px; }
+.loop-actions button { flex: 1; padding: 6px 8px; font-size: 13px; }
+.loop-readout { margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.loop-readout[data-active="true"] { color: var(--brass); }
+.loop-actions + .note[data-tone="error"] { color: var(--bad); }
 .presets button { flex: 1; padding: 5px 8px; }
 .presets button[aria-pressed="true"] { border-color: var(--brass); color: var(--brass); }
 .footer-actions button { flex: 1; font-size: 13px; }

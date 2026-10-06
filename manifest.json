@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Video Controls",
-  "version": "1.1.0",
-  "description": "Control video speed and boost tab volume. Audio stays in this browser.",
+  "version": "1.2.0",
+  "description": "Control video speed, repeat a section, and boost tab volume. Audio stays in this browser.",
   "minimum_chrome_version": "116",
   "permissions": [
     "tabCapture",
@@ -37,7 +37,16 @@
       "description": "Amplify this tab and decrease gain by one step"
     },
     "reset-controls": {
-      "description": "Reset video speed to 1\u00d7 and gain to 0 dB"
+      "description": "Reset speed to 1\u00d7, gain to 0 dB, and clear the loop"
+    },
+    "loop-set-a": {
+      "description": "Set A\u2013B repeat start at the current video time"
+    },
+    "loop-set-b": {
+      "description": "Set A\u2013B repeat end and activate the loop"
+    },
+    "loop-clear": {
+      "description": "Clear A\u2013B repeat for this tab"
     }
   },
   "background": {

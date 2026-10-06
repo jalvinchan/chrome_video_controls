@@ -20,7 +20,7 @@ async function present() {
     client.snapshot(),
     (async () => {
       try {
-        if (blocked) throw new Error("Speed controls aren't available on this page.");
+        if (blocked) throw new Error("Video controls aren't available on this page.");
         return await video.snapshot(tab.id);
       } catch (error) {
         const stored = await globalThis.chrome.storage.local.get("playbackRate");
@@ -89,17 +89,32 @@ async function boot() {
         }
       };
     })(),
+    onLoop: async (action) => {
+      view.setLoopStatus(null);
+      view.setBusy(true);
+      try {
+        const tabId = view.state.currentTabId;
+        await video[action](tabId);
+        await sync.refresh();
+        view.setStatus(null);
+      } catch (error) {
+        view.setLoopStatus({ message: error.message, tone: "error" });
+      } finally {
+        view.setBusy(false);
+      }
+    },
     onReset: async () => {
       view.setBusy(true);
       try {
         const operations = [client.setLevel(1)];
-        if (!view.state.video?.error) operations.push(video.setRate(view.state.currentTabId, 1));
+        if (!view.state.video?.error) operations.push(video.resetControls(view.state.currentTabId));
         else operations.push(globalThis.chrome.storage.local.set({ playbackRate: 1 }));
         const results = await Promise.allSettled(operations);
         view.update(await present());
         const failed = results.find((result) => result.status === "rejected");
         if (failed) throw failed.reason;
-        view.setStatus({ message: "Controls reset to 1× speed and 0 dB gain.", tone: "ok" });
+        view.setLoopStatus(null);
+        view.setStatus({ message: "Controls reset to 1× speed and 0 dB gain; loop cleared.", tone: "ok" });
       } catch (error) {
         view.setStatus({ message: error.message, tone: "error" });
       } finally {

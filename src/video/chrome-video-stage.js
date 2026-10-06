@@ -18,6 +18,14 @@ export class ChromeVideoStage {
     return this.#send(tabId, { type: "adjustRate", delta });
   }
 
+  setLoopA(tabId) { return this.#send(tabId, { type: "setLoopA" }); }
+
+  setLoopB(tabId) { return this.#send(tabId, { type: "setLoopB" }); }
+
+  clearLoop(tabId) { return this.#send(tabId, { type: "clearLoop" }); }
+
+  resetControls(tabId) { return this.#send(tabId, { type: "resetControls" }); }
+
   #send(tabId, message) {
     const operation = this.chain.then(() => this.#deliver(tabId, message));
     this.chain = operation.catch(() => {});

@@ -10,9 +10,11 @@ export class PopupView {
     this.onReset = () => {};
     this.onShortcuts = () => {};
     this.onRefresh = () => {};
+    this.onLoop = () => {};
     this.busy = false;
     this.state = null;
     this.statusMessage = null;
+    this.loopStatusMessage = null;
     this.slider = null;
     this.readout = null;
     this.tab = null;
@@ -35,6 +37,7 @@ export class PopupView {
     this.onReset = handlers.onReset ?? (() => {});
     this.onShortcuts = handlers.onShortcuts ?? (() => {});
     this.onRefresh = handlers.onRefresh ?? (() => {});
+    this.onLoop = handlers.onLoop ?? (() => {});
   }
 
   render(state) {
@@ -97,7 +100,16 @@ export class PopupView {
       this.editingSpeed = false;
       this.onRefresh();
     });
-    this.resetButton = h("button", { type: "button" }, "Reset controls");
+    this.loopReadout = h("p", { class: "loop-readout", role: "status", "aria-live": "polite" });
+    this.loopStatus = h("p", { class: "note", role: "status", "aria-live": "polite" });
+    this.loopButtons = [
+      ["setLoopA", "Set A"], ["setLoopB", "Set B"], ["clearLoop", "Clear loop"],
+    ].map(([action, label]) => {
+      const button = h("button", { type: "button" }, label);
+      button.addEventListener("click", () => this.onLoop(action));
+      return { action, button };
+    });
+    this.resetButton = h("button", { type: "button", title: "Reset speed to 1×, gain to 0 dB, and clear the loop" }, "Reset controls");
     this.resetButton.addEventListener("click", () => this.onReset());
     const shortcutsButton = h("button", { type: "button" }, "Shortcuts");
     shortcutsButton.addEventListener("click", () => this.onShortcuts());
@@ -121,6 +133,12 @@ export class PopupView {
       h("div", { class: "level" }, this.readout, this.slider),
       this.button,
       this.status,
+      h("section", { class: "control-section", "aria-label": "A–B repeat" },
+        h("h2", {}, "A–B repeat"),
+        this.loopReadout,
+        h("div", { class: "loop-actions" }, this.loopButtons.map(({ button }) => button)),
+        this.loopStatus,
+      ),
       h("div", { class: "footer-actions" }, this.resetButton, shortcutsButton),
       h("p", { class: "note" }, "Speed: Alt + Shift + ← / →. Volume: Alt + Shift + ↓ / ↑. On Mac, Alt is Option."),
       h("p", { class: "note" }, "Chrome shows a sharing indicator while a tab is amplified. Audio is not recorded."),
@@ -129,6 +147,9 @@ export class PopupView {
   }
 
   update(state) {
+    if (this.state?.currentTabId !== state.currentTabId
+      || this.state?.video?.loop?.a !== state.video?.loop?.a
+      || this.state?.video?.loop?.b !== state.video?.loop?.b) this.loopStatusMessage = null;
     this.state = state;
     if (!this.slider) return;
     this.tab.textContent = state.currentTitle || "This tab";
@@ -143,6 +164,7 @@ export class PopupView {
     for (const { button } of this.speedPresets) button.disabled = Boolean(video.error);
     this.speedStatus.textContent = video.error || (video.available ? "" : "No video found.");
     this.speedStatus.hidden = !this.speedStatus.textContent;
+    this.#paintLoop();
     this.resetButton.disabled = this.busy;
     const onThisTab = state.live && state.tabId === state.currentTabId;
     if (onThisTab || (state.blocked && state.live)) this.button.textContent = "Stop";
@@ -153,6 +175,7 @@ export class PopupView {
 
   setBusy(busy) {
     this.busy = busy;
+    this.#paintLoop();
     if (this.resetButton) this.resetButton.disabled = busy;
     if (!this.button || !this.state) return;
     this.button.disabled = busy || (Boolean(this.state.blocked) && !this.state.live);
@@ -170,6 +193,11 @@ export class PopupView {
     this.status.dataset.tone = status.tone || "ok";
   }
 
+  setLoopStatus(status) {
+    this.loopStatusMessage = status;
+    this.#paintLoop();
+  }
+
   #paintLevel() {
     const label = levelLabel(Number(this.slider.value));
     this.readout.textContent = label;
@@ -184,6 +212,22 @@ export class PopupView {
     for (const preset of this.speedPresets) {
       preset.button.setAttribute("aria-pressed", String(preset.rate === rate));
     }
+  }
+
+  #paintLoop() {
+    if (!this.loopReadout || !this.state) return;
+    const video = this.state.video;
+    const loop = video?.loop ?? {};
+    this.loopReadout.textContent = `A ${timestamp(loop.a)} · B ${timestamp(loop.b)}${loop.active ? " · Looping" : ""}`;
+    this.loopReadout.dataset.active = String(Boolean(loop.active));
+    for (const { action, button } of this.loopButtons) {
+      button.disabled = this.busy || Boolean(video?.error) || !video?.available
+        || (action === "setLoopB" && loop.a == null)
+        || (action === "clearLoop" && loop.a == null && !loop.error);
+    }
+    this.loopStatus.textContent = this.loopStatusMessage?.message || loop.error || "";
+    this.loopStatus.hidden = !this.loopStatus.textContent;
+    this.loopStatus.dataset.tone = this.loopStatusMessage?.tone || (loop.error ? "error" : "");
   }
 
   #paintStatus(state) {
@@ -213,6 +257,16 @@ export class PopupView {
     this.status.hidden = true;
     this.status.dataset.tone = "";
   }
+}
+
+function timestamp(time) {
+  if (time == null || !Number.isFinite(time)) return "—";
+  const centiseconds = Math.floor(time * 100);
+  const seconds = Math.floor(centiseconds / 100) % 60;
+  const minutes = Math.floor(centiseconds / 6000) % 60;
+  const hours = Math.floor(centiseconds / 360000);
+  const fraction = String(centiseconds % 100).padStart(2, "0");
+  return `${hours ? `${hours}:${String(minutes).padStart(2, "0")}` : minutes}:${String(seconds).padStart(2, "0")}.${fraction}`;
 }
 
 function levelLabel(sliderValue) {

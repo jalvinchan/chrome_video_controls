@@ -71,6 +71,17 @@ test("unrelated settings/messages and updates to other tabs do not cause reads",
   assert.equal(context.reads(), 4);
 });
 
+test("loop notifications refresh only the active tab without a storage change", async () => {
+  const context = setup();
+  await context.sync.start();
+  context.chrome.runtime.onMessage.emit({ type: "videoControlsChanged" }, { tab: { id: 8 } });
+  context.chrome.runtime.onMessage.emit({ type: "videoControlsChanged" }, {});
+  assert.equal(context.reads(), 1);
+  context.chrome.runtime.onMessage.emit({ type: "videoControlsChanged" }, { tab: { id: 7 } });
+  await context.sync.running;
+  assert.equal(context.reads(), 2);
+});
+
 test("bursts discard stale snapshots and coalesce refreshes", async () => {
   let resolveRead;
   let rate = 1;

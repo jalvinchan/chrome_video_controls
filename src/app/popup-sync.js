@@ -11,8 +11,9 @@ export class PopupSync {
     this.onStorage = (changes, area) => {
       if (area === "local" && Object.keys(changes).some((key) => SETTINGS.has(key))) this.refresh();
     };
-    this.onMessage = (message) => {
+    this.onMessage = (message, sender) => {
       if (message?.type === "controlsChanged") this.refresh();
+      if (message?.type === "videoControlsChanged" && sender?.tab?.id === this.currentTabId()) this.refresh();
     };
     this.onActivated = () => this.refresh();
     this.onUpdated = (tabId, change) => {

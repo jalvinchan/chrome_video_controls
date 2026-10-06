@@ -6,6 +6,7 @@ A Chrome extension for local audio and standard HTML video controls.
 
 - Local tab audio capture, gain control, and compression.
 - Pitch-preserving video speed controls and keyboard shortcuts.
+- A–B repeat for loaded, seekable video.
 
 ## Install
 
