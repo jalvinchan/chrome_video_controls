@@ -184,6 +184,7 @@ export class PopupView {
           h("p", { class: "note" }, "Hold R on the video page to temporarily increase playback to at least 3× speed. Release R to restore your previous speed."),
           h("p", { class: "note" }, "Speed: Alt + Shift + ← / →. Volume: Alt + Shift + ↓ / ↑. On Mac, Alt is Option. Use Shortcuts to customize these keys."),
           h("p", { class: "note" }, "Chrome shows a sharing indicator while a tab is amplified. Audio is not recorded."),
+          h("p", { class: "note" }, "Speed and gain are remembered separately for each site's hostname. Gain applies when you amplify. Reset controls saves 1× and 0 dB for this site."),
         ),
       ),
     ));
@@ -215,19 +216,21 @@ export class PopupView {
     this.speedStatus.hidden = !this.speedStatus.textContent;
     this.#paintLoop();
     this.#paintBookmarks();
-    this.resetButton.disabled = this.busy;
+    this.resetButton.disabled = this.busy || Boolean(state.blocked);
     const onThisTab = state.live && state.tabId === state.currentTabId;
     if (onThisTab || (state.blocked && state.live)) this.button.textContent = "Stop";
     else this.button.textContent = "Amplify this tab";
     this.button.disabled = this.busy || (Boolean(state.blocked) && !state.live);
+    this.slider.disabled = this.busy || Boolean(state.blocked);
     if (!this.statusMessage) this.#paintStatus(state);
   }
 
   setBusy(busy) {
     this.busy = busy;
     this.#paintLoop();
-    if (this.resetButton) this.resetButton.disabled = busy;
+    if (this.resetButton) this.resetButton.disabled = busy || Boolean(this.state?.blocked);
     if (!this.button || !this.state) return;
+    this.slider.disabled = busy || Boolean(this.state.blocked);
     this.button.disabled = busy || (Boolean(this.state.blocked) && !this.state.live);
   }
 
@@ -347,9 +350,10 @@ export class PopupView {
     if (state.live) {
       const where = state.title ? `${state.title} is` : "Another tab is";
       const tail = state.blocked ? "" : " Amplifying here switches to this tab.";
-      this.status.textContent = state.sliderValue === 0
+      const capturedLevel = state.capturedSliderValue ?? state.sliderValue;
+      this.status.textContent = capturedLevel === 0
         ? `${where} muted.${tail}`
-        : `${where} playing with ${levelLabel(state.sliderValue)} gain.${tail}`;
+        : `${where} playing with ${levelLabel(capturedLevel)} gain.${tail}`;
       this.status.dataset.tone = "warn";
       return;
     }

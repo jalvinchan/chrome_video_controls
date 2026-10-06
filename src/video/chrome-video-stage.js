@@ -30,6 +30,7 @@ export class ChromeVideoStage {
 
   seekBookmark(tabId, key, time) { return this.#send(tabId, { type: "seekBookmark", key, time }); }
 
+
   #send(tabId, message) {
     const operation = this.chain.then(() => this.#deliver(tabId, message));
     this.chain = operation.catch(() => {});

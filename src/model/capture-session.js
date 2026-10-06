@@ -1,8 +1,9 @@
 export class CaptureSession {
-  constructor({ tabId = null, title = "", level }) {
+  constructor({ tabId = null, title = "", url = "", level }) {
     if (!level) throw new Error("capture session: missing gain");
     this.tabId = tabId;
     this.title = title;
+    this.url = url;
     this.level = level;
   }
 
@@ -15,7 +16,7 @@ export class CaptureSession {
   }
 
   withLevel(level) {
-    return new CaptureSession({ tabId: this.tabId, title: this.title, level });
+    return new CaptureSession({ tabId: this.tabId, title: this.title, url: this.url, level });
   }
 
   toJSON() {

@@ -10,6 +10,7 @@ A Chrome extension for local audio and standard HTML video controls.
 - Persistent timestamp bookmarks with optional notes.
 - Hold R for temporary acceleration; release to restore the previous rate.
 - A compact popup with expandable secondary controls.
+- Separate saved speed and gain preferences for each hostname.
 
 ## Install
 

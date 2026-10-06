@@ -5,7 +5,11 @@ import { test } from "node:test";
 import { playbackRate } from "../src/model/playback-rate.js";
 import { ChromeVideoStage } from "../src/video/chrome-video-stage.js";
 import { handleVideoCommand } from "../src/app/video-commands.js";
+import { ChromeSitePreferences, sitePreferenceKey } from "../src/storage/chrome-site-preferences.js";
+import { handleSitePreferenceMessage } from "../src/app/site-preference-messages.js";
 import { isAmplifierMessage } from "../src/model/message-kinds.js";
+
+const rateKey = "sitePreference:www.example.com:playbackRate";
 
 const source = await readFile(new URL("../src/entrypoint/video.js", import.meta.url), "utf8");
 
@@ -42,7 +46,7 @@ function fakeVideo({ width = 640, paused = false } = {}) {
   };
 }
 
-async function page(initial = {}, videos = [fakeVideo()]) {
+async function page(initial = {}, videos = [fakeVideo()], url = "https://www.example.com/watch?v=1", startupRate) {
   const stored = { ...initial };
   const listeners = [];
   let changed;
@@ -56,7 +60,7 @@ async function page(initial = {}, videos = [fakeVideo()]) {
   const context = vm.createContext({
     console,
     URL,
-    document: { documentElement: {}, URL: "https://www.example.com/watch?v=1", querySelectorAll: () => videos },
+    document: { documentElement: {}, URL: url, querySelectorAll: () => videos },
     addEventListener: (name, handler) => navigation.set(name, handler),
     setTimeout(callback) { timers.set(++nextCallback, callback); return nextCallback; },
     clearTimeout: (id) => timers.delete(id),
@@ -84,7 +88,20 @@ async function page(initial = {}, videos = [fakeVideo()]) {
       },
       runtime: {
         onMessage: { addListener(callback) { listeners.push(callback); } },
-        async sendMessage(message) { notifications.push(message); },
+        async sendMessage(message) {
+          if (message.target === "sitePreferences") {
+            try {
+              const repository = new ChromeSitePreferences(context.chrome.storage.local);
+              const result = await handleSitePreferenceMessage(repository, message,
+                { frameId: 0, url: context.document.URL });
+              if (message.type === "loadRate" && startupRate !== undefined) {
+                await repository.saveRate(context.document.URL, startupRate);
+              }
+              return { ok: true, result };
+            } catch (error) { return { ok: false, error: error.message }; }
+          }
+          notifications.push(message);
+        },
       },
     },
   });
@@ -108,7 +125,7 @@ async function page(initial = {}, videos = [fakeVideo()]) {
     fire: (type, event = {}) => navigation.get(type)(event),
     tick() { const callbacks = [...timers.values()]; timers.clear(); for (const callback of callbacks) callback(); },
     scan: () => observe([{ type: "childList" }]),
-    changePreference: (rate) => changed({ playbackRate: { newValue: rate } }, "local"),
+    changePreference: (rate) => changed({ [sitePreferenceKey(url, "playbackRate")]: { newValue: rate } }, "local"),
     failSaving: () => { failSave = true; },
   };
 }
@@ -119,6 +136,47 @@ test("speed normalizes fine steps and rejects invalid input", () => {
   assert.equal(playbackRate(0), 0.25);
   assert.equal(playbackRate(100), 4);
   for (const value of [NaN, Infinity, "3", null]) assert.throws(() => playbackRate(value), /finite/);
+});
+
+test("speed saves and resets only this site and loads its default after reload", async () => {
+  const otherUrl = "https://example.com/course";
+  const otherKey = sitePreferenceKey(otherUrl, "playbackRate");
+  const current = await page({ playbackRate: 1.5, [otherKey]: 4 });
+  await current.send({ type: "setRate", rate: 3 });
+  assert.equal(current.stored.playbackRate, 1.5);
+  assert.equal(current.stored[otherKey], 4);
+  const reload = await page(current.stored);
+  assert.equal(reload.videos[0].playbackRate, 3);
+  const other = await page(current.stored, [fakeVideo()], otherUrl);
+  assert.equal(other.videos[0].playbackRate, 4);
+  await reload.send({ type: "resetControls" });
+  assert.equal(reload.stored[rateKey], 1);
+  assert.equal(reload.stored[otherKey], 4);
+  assert.equal(other.videos[0].playbackRate, 4);
+  const unconfigured = await page(reload.stored, [fakeVideo()], "https://new-site.com");
+  assert.equal(unconfigured.videos[0].playbackRate, 1.5);
+});
+
+test("another site's preference does not change the default for replacement videos", async () => {
+  const current = await page({ playbackRate: 1.5, [rateKey]: 2 });
+  await current.context.chrome.storage.local.set({ [sitePreferenceKey("https://example.com", "playbackRate")]: 4 });
+  const next = fakeVideo();
+  current.videos.push(next);
+  current.scan();
+  assert.equal(next.playbackRate, 2);
+  current.changePreference(3);
+  assert.equal(next.playbackRate, 2, "Existing videos keep their speed");
+  const replacement = fakeVideo();
+  current.videos.push(replacement);
+  current.scan();
+  assert.equal(replacement.playbackRate, 3);
+});
+
+test("a same-site change arriving during initial load wins over the stale saved rate", async () => {
+  const current = await page({ playbackRate: 1.5 }, [fakeVideo()],
+    "https://www.example.com/watch?v=1", 3);
+  assert.equal(current.videos[0].playbackRate, 3);
+  assert.equal((await current.send({ type: "snapshot" })).savedRate, 3);
 });
 
 test("holding R temporarily accelerates only the primary video and restores without saving", async () => {
@@ -221,7 +279,7 @@ test("explicit speed operations cancel hold and adjust from the restored speed",
     assert.equal(state.rate, expected);
     current.key("keyup");
     assert.equal(current.videos[0].playbackRate, expected);
-    assert.equal(current.stored.playbackRate, expected);
+    assert.equal(current.stored[rateKey], expected);
   }
   const current = await page({ playbackRate: 1.5 });
   current.key("keydown");
@@ -277,7 +335,7 @@ test("no-video pages can save speed and rapid shortcuts accumulate at the bounds
   const saved = await current.send({ type: "setRate", rate: 3.5 });
   assert.equal(saved.available, false);
   assert.equal(saved.rate, 3.5);
-  assert.equal(current.stored.playbackRate, 3.5);
+  assert.equal(current.stored[rateKey], 3.5);
   current.videos.push(fakeVideo());
   current.scan();
   assert.equal(current.videos[0].playbackRate, 3.5);
@@ -289,7 +347,7 @@ test("no-video pages can save speed and rapid shortcuts accumulate at the bounds
   assert.equal(current.videos[0].playbackRate, 4);
   await current.send({ type: "setRate", rate: 1 });
   assert.equal(current.videos[0].playbackRate, 1);
-  assert.equal(current.stored.playbackRate, 1);
+  assert.equal(current.stored[rateKey], 1);
 });
 
 test("a preference from another tab affects the next video, not current playback", async () => {
@@ -313,7 +371,7 @@ test("failed saves restore speed and malformed messages do not poison later cont
   current.failSaving();
   await assert.rejects(current.send({ type: "setRate", rate: 4 }), /Storage unavailable/);
   assert.equal(current.videos[0].playbackRate, 3);
-  assert.equal(current.stored.playbackRate, 3);
+  assert.equal(current.stored[rateKey], 3);
 });
 
 test("primary video prefers visible playing content over a larger paused player", async () => {
@@ -342,7 +400,7 @@ test("speed commands reach the content script without touching audio capture", a
   });
   const audio = { start() { assert.fail("Speed must not capture audio"); } };
   await handleVideoCommand({ audio, video }, "speed-up", { id: 7 });
-  assert.deepEqual(calls[0].files, ["src/entrypoint/video.js"], "Deferred subtitle code is not injected");
+  assert.deepEqual(calls[0].files, ["src/entrypoint/video.js"]);
   const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url), "utf8"));
   assert.equal(manifest.content_scripts, undefined, "Controls require an explicit toolbar action or shortcut");
   assert.equal(manifest.host_permissions, undefined, "No persistent website access is requested");

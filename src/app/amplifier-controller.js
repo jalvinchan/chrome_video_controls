@@ -1,10 +1,12 @@
 import { captureRefusal } from "../model/capture-target.js";
 import { CaptureSession } from "../model/capture-session.js";
 import { GainLevel } from "../model/gain-level.js";
+import { sitePreferenceKey } from "../storage/chrome-site-preferences.js";
 
 export class AmplifierController {
-  constructor({ repository, capture, stage }) {
+  constructor({ repository, preferences, capture, stage }) {
     this.repository = repository;
+    this.preferences = preferences;
     this.capture = capture;
     this.stage = stage;
     this.session = null;
@@ -12,8 +14,8 @@ export class AmplifierController {
     this.chain = Promise.resolve();
   }
 
-  snapshot() {
-    return this.#enqueue(async () => this.session.toJSON());
+  snapshot(tab) {
+    return this.#enqueue(() => this.#snapshot(tab));
   }
 
   start(tab) {
@@ -21,18 +23,24 @@ export class AmplifierController {
       if (typeof tab?.id !== "number") throw new Error("start amplifier: missing tab");
       const refusal = captureRefusal(tab.url);
       if (refusal) throw new Error(refusal);
-      if (this.session.live && this.session.tabId === tab.id) return this.session.toJSON();
+      if (this.session.live && this.session.tabId === tab.id) {
+        await this.#syncTab(tab);
+        return this.session.toJSON();
+      }
+      const level = await this.preferences.loadLevel(tab.url);
       if (this.session.live) await this.#release();
 
       await this.stage.open();
       try {
         const streamId = await this.capture.getStreamId(tab.id);
-        await this.stage.play(streamId, this.session.level);
+        await this.stage.play(streamId, level);
         this.session = new CaptureSession({
           tabId: tab.id,
           title: typeof tab.title === "string" ? tab.title : "",
-          level: this.session.level,
+          url: tab.url,
+          level,
         });
+        await this.repository.saveLevel(level);
         await this.repository.saveTab(this.session);
       } catch (error) {
         try {
@@ -56,18 +64,53 @@ export class AmplifierController {
     });
   }
 
-  setLevel(sliderValue) {
+  setLevel(sliderValue, tab) {
     return this.#enqueue(async () => {
       const level = new GainLevel(sliderValue);
-      if (this.session.live) await this.stage.setGain(level);
-      this.session = this.session.withLevel(level);
-      await this.repository.saveLevel(level);
-      return this.session.toJSON();
+      if (tab) await this.#syncTab(tab);
+      const target = tab ?? (this.session.url ? { id: this.session.tabId, url: this.session.url } : null);
+      // Editing this site's default must not alter another tab's captured audio.
+      const apply = !target || !this.session.live || this.session.tabId === target.id;
+      if (apply && this.session.live) await this.stage.setGain(level);
+      try {
+        if (target) await this.preferences.saveLevel(target.url, level);
+        if (apply) await this.repository.saveLevel(level);
+      } catch (error) {
+        if (apply && this.session.live) await this.stage.setGain(this.session.level);
+        throw error;
+      }
+      if (apply) this.session = this.session.withLevel(level);
+      return this.#snapshot(tab);
     });
   }
 
   tabClosed(tabId) {
     return this.#enqueue(() => this.#dropTab(tabId));
+  }
+
+  tabNavigated(tab) {
+    return this.#enqueue(() => this.#syncTab(tab));
+  }
+
+  async #syncTab(tab) {
+    if (!tab?.url || !this.session.live || this.session.tabId !== tab.id) return;
+    if (captureRefusal(tab.url)) { await this.#release(); return; }
+    if (this.session.url && sitePreferenceKey(this.session.url, "sliderValue")
+      === sitePreferenceKey(tab.url, "sliderValue")) return;
+    const level = await this.preferences.loadLevel(tab.url);
+    await this.stage.setGain(level);
+    this.session = new CaptureSession({ tabId: tab.id, title: tab.title, url: tab.url, level });
+    await this.repository.saveLevel(level);
+    await this.repository.saveTab(this.session);
+  }
+
+  async #snapshot(tab) {
+    await this.#syncTab(tab);
+    const state = this.session.toJSON();
+    if (!tab?.url || captureRefusal(tab.url)) return state;
+    if (this.session.live && this.session.tabId === tab.id) return state;
+    return { ...state, capturedSliderValue: state.sliderValue,
+      sliderValue: (await this.preferences.loadLevel(tab.url)).sliderValue };
   }
 
   captureEnded() {
@@ -100,7 +143,7 @@ export class AmplifierController {
     const live = stored.tabId != null && (await this.stage.isOpen());
     if (stored.tabId != null && !live) await this.repository.clearTab();
     this.session = live
-      ? new CaptureSession({ tabId: stored.tabId, title: stored.title, level: stored.level })
+      ? new CaptureSession({ tabId: stored.tabId, title: stored.title, url: stored.url, level: stored.level })
       : CaptureSession.idle(stored.level);
   }
 

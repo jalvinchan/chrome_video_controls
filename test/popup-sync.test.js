@@ -72,6 +72,18 @@ test("unrelated settings/messages and updates to other tabs do not cause reads",
   assert.equal(context.reads(), 4);
 });
 
+
+test("site speed, site gain and captured session changes refresh the popup", async () => {
+  const context = setup();
+  await context.sync.start();
+  for (const key of ["sitePreference:www.example.com:playbackRate",
+    "sitePreference:www.example.com:sliderValue", "liveSliderValue", "tabUrl"]) {
+    context.chrome.storage.onChanged.emit({ [key]: { newValue: 2 } }, "local");
+    await context.sync.running;
+  }
+  assert.equal(context.reads(), 5);
+});
+
 test("loop notifications refresh only the active tab without a storage change", async () => {
   const context = setup();
   await context.sync.start();

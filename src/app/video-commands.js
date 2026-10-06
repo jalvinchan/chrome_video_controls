@@ -8,7 +8,7 @@ export async function handleVideoCommand({ audio, video }, command, tab) {
   }
   if (command === "reset-controls") {
     await video.resetControls(tab.id);
-    return audio.setLevel(DEFAULT_LEVEL);
+    return audio.setLevel(DEFAULT_LEVEL, tab);
   }
   if (command === "loop-set-a") return video.setLoopA(tab.id);
   if (command === "loop-set-b") return video.setLoopB(tab.id);
@@ -18,7 +18,7 @@ export async function handleVideoCommand({ audio, video }, command, tab) {
     if (refusal) throw new Error(refusal);
     const state = await audio.start(tab);
     const delta = command === "volume-up" ? LEVEL_STEP : -LEVEL_STEP;
-    return audio.setLevel(new GainLevel(state.sliderValue + delta).sliderValue);
+    return audio.setLevel(new GainLevel(state.sliderValue + delta).sliderValue, tab);
   }
   throw new Error("Unknown video shortcut.");
 }

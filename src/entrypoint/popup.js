@@ -4,10 +4,12 @@ import { PopupView } from "../presentation/popup-view.js";
 import { ChromeVideoStage } from "../video/chrome-video-stage.js";
 import { PopupSync } from "../app/popup-sync.js";
 import { BookmarkClient } from "../app/bookmark-client.js";
+import { ChromeSitePreferences } from "../storage/chrome-site-preferences.js";
 
 const client = new AmplifierClient(globalThis.chrome.runtime);
 const video = new ChromeVideoStage(globalThis.chrome);
 const bookmarks = new BookmarkClient(globalThis.chrome.runtime);
+const preferences = new ChromeSitePreferences(globalThis.chrome.storage.local);
 const view = new PopupView(document.querySelector("#app"));
 
 async function currentTab() {
@@ -19,14 +21,15 @@ async function present() {
   const tab = await currentTab();
   const blocked = tab.url ? captureRefusal(tab.url) : null;
   const [state, videoState] = await Promise.all([
-    client.snapshot(),
+    client.snapshot(tab),
     (async () => {
       try {
         if (blocked) throw new Error("Video controls aren't available on this page.");
         return await video.snapshot(tab.id);
       } catch (error) {
         const stored = await globalThis.chrome.storage.local.get("playbackRate");
-        return { available: false, rate: stored.playbackRate ?? 1, error: error.message };
+        const rate = blocked ? stored.playbackRate ?? 1 : (await preferences.loadRate(tab.url)).rate;
+        return { available: false, rate, error: error.message };
       }
     })(),
   ]);
@@ -71,14 +74,13 @@ async function boot() {
       try {
         const latest = await present();
         const amplifyingThisTab = latest.live && latest.tabId === latest.currentTabId;
-        const next = amplifyingThisTab || (latest.blocked && latest.live)
-          ? await client.stop()
-          : await client.start({
-              id: latest.tab.id,
-              url: latest.tab.url,
-              title: latest.tab.title,
-            });
-        view.update({ ...latest, ...next, blocked: latest.blocked });
+        if (amplifyingThisTab || (latest.blocked && latest.live)) await client.stop();
+        else await client.start({
+          id: latest.tab.id,
+          url: latest.tab.url,
+          title: latest.tab.title,
+        });
+        view.update(await present());
         view.setStatus(null);
       } catch (error) {
         view.setStatus({ message: error.message, tone: "error" });
@@ -87,10 +89,14 @@ async function boot() {
       }
     },
     onLevel: (sliderValue) => {
-      client.setLevel(sliderValue).then((next) => {
+      const tab = view.state.tab;
+      client.setLevel(sliderValue, tab).then((next) => {
+        if (view.state.currentTabId !== tab.id || view.state.currentUrl !== tab.url) return;
         view.update({ ...view.state, ...next });
         view.setStatus(null);
       }).catch((error) => {
+        if (view.state.currentTabId !== tab.id || view.state.currentUrl !== tab.url) return;
+        view.update(view.state);
         view.setStatus({ message: error.message, tone: "error" });
       });
     },
@@ -140,9 +146,9 @@ async function boot() {
     onReset: async () => {
       view.setBusy(true);
       try {
-        const operations = [client.setLevel(1)];
+        const operations = [client.setLevel(1, view.state.tab)];
         if (!view.state.video?.error) operations.push(video.resetControls(view.state.currentTabId));
-        else operations.push(globalThis.chrome.storage.local.set({ playbackRate: 1 }));
+        else if (!view.state.blocked) operations.push(preferences.saveRate(view.state.currentUrl, 1));
         const results = await Promise.allSettled(operations);
         view.update(await present());
         const failed = results.find((result) => result.status === "rejected");

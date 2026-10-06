@@ -193,6 +193,24 @@ test("warnings and errors remain visible when routine status text is hidden", ()
   });
 });
 
+test("the selected site's gain and another captured tab's warning show their own levels", () => {
+  withDocument((view) => {
+    view.render({ ...idle, live: true, tabId: 8, title: "Another video",
+      sliderValue: 1, capturedSliderValue: 3 });
+    assert.equal(view.readout.textContent, "0 dB");
+    assert.match(view.status.textContent, /Another video is playing with \+20 dB gain/);
+    view.setBusy(true);
+    assert.equal(view.slider.disabled, true);
+    view.setBusy(false);
+    assert.equal(view.slider.disabled, false);
+    view.update({ ...idle, blocked: "This page cannot be amplified." });
+    assert.equal(view.slider.disabled, true);
+    assert.equal(view.resetButton.disabled, true);
+    view.setBusy(false);
+    assert.equal(view.resetButton.disabled, true);
+  });
+});
+
 test("loop controls show endpoints, active state, and actionable errors", () => {
   withDocument((view) => {
     const actions = [];

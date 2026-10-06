@@ -1,6 +1,7 @@
 import { BOOKMARK_PREFIX } from "../storage/chrome-bookmark-repository.js";
+import { SITE_PREFERENCE_PREFIX } from "../storage/chrome-site-preferences.js";
 
-const SETTINGS = new Set(["playbackRate", "sliderValue", "tabId", "title"]);
+const SETTINGS = new Set(["playbackRate", "sliderValue", "liveSliderValue", "tabId", "title", "tabUrl"]);
 
 // Refresh on events, not a timer. Read actual video state because a saved speed
 // is a preference for new videos, not necessarily the speed of this tab.
@@ -11,7 +12,7 @@ export class PopupSync {
     this.dirty = false;
     this.running = null;
     this.onStorage = (changes, area) => {
-      if (area === "local" && Object.keys(changes).some((key) => SETTINGS.has(key)
+      if (area === "local" && Object.keys(changes).some((key) => SETTINGS.has(key) || key.startsWith(SITE_PREFERENCE_PREFIX)
         || key === BOOKMARK_PREFIX + this.currentBookmarkKey())) this.refresh();
     };
     this.onMessage = (message, sender) => {

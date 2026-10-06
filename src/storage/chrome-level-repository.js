@@ -13,16 +13,18 @@ export class ChromeLevelRepository extends LevelRepository {
 
   async load() {
     try {
-      const stored = await this.storage.get([SLIDER_VALUE, TAB_ID, TITLE]);
+      const stored = await this.storage.get([SLIDER_VALUE, "liveSliderValue", TAB_ID, TITLE, "tabUrl"]);
       // Old percentage settings use a different scale. Start those users at
       // 0 dB rather than interpreting a value such as 200 as maximum boost.
-      const sliderValue = typeof stored?.sliderValue === "number" && Number.isFinite(stored.sliderValue)
-        ? stored.sliderValue
+      const value = stored?.liveSliderValue ?? stored?.sliderValue;
+      const sliderValue = typeof value === "number" && Number.isFinite(value)
+        ? value
         : DEFAULT_LEVEL;
       return {
         level: new GainLevel(sliderValue),
         tabId: typeof stored?.tabId === "number" ? stored.tabId : null,
         title: typeof stored?.title === "string" ? stored.title : "",
+        url: typeof stored?.tabUrl === "string" ? stored.tabUrl : "",
       };
     } catch (error) {
       throw new Error(`load amplifier: ${error.message}`);
@@ -31,7 +33,7 @@ export class ChromeLevelRepository extends LevelRepository {
 
   async saveLevel(level) {
     try {
-      await this.storage.set({ [SLIDER_VALUE]: level.sliderValue });
+      await this.storage.set({ liveSliderValue: level.sliderValue });
     } catch (error) {
       throw new Error(`save amplifier level: ${error.message}`);
     }
@@ -39,7 +41,7 @@ export class ChromeLevelRepository extends LevelRepository {
 
   async saveTab(session) {
     try {
-      await this.storage.set({ [TAB_ID]: session.tabId, [TITLE]: session.title });
+      await this.storage.set({ [TAB_ID]: session.tabId, [TITLE]: session.title, tabUrl: session.url });
     } catch (error) {
       throw new Error(`save amplifier tab: ${error.message}`);
     }
@@ -47,7 +49,7 @@ export class ChromeLevelRepository extends LevelRepository {
 
   async clearTab() {
     try {
-      await this.storage.set({ [TAB_ID]: null, [TITLE]: "" });
+      await this.storage.set({ [TAB_ID]: null, [TITLE]: "", tabUrl: "" });
     } catch (error) {
       throw new Error(`save amplifier tab: ${error.message}`);
     }

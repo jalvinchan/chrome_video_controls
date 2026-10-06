@@ -1,9 +1,9 @@
 {
   "name": "video-controls",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
-  "description": "Control video speed, repeat sections, save timestamp bookmarks, and boost tab volume. Audio stays in this browser.",
+  "description": "Control video speed, boost volume, repeat sections, save bookmarks, and read existing or imported transcripts. Audio stays local.",
   "scripts": {
     "test": "node --test"
   },

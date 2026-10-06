@@ -5,8 +5,8 @@ export class AmplifierClient {
     this.runtime = runtime;
   }
 
-  snapshot() {
-    return this.#send({ type: AmplifierMessage.snapshot });
+  snapshot(tab) {
+    return this.#send({ type: AmplifierMessage.snapshot, tab });
   }
 
   start(tab) {
@@ -17,8 +17,8 @@ export class AmplifierClient {
     return this.#send({ type: AmplifierMessage.stop });
   }
 
-  setLevel(sliderValue) {
-    return this.#send({ type: AmplifierMessage.setLevel, sliderValue });
+  setLevel(sliderValue, tab) {
+    return this.#send({ type: AmplifierMessage.setLevel, sliderValue, tab });
   }
 
   async #send(message) {

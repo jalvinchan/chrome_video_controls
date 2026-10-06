@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Video Controls",
-  "version": "1.4.0",
-  "description": "Control video speed, repeat sections, save timestamp bookmarks, and boost tab volume. Audio stays in this browser.",
+  "version": "1.5.0",
+  "description": "Control video speed, boost volume, repeat sections, save bookmarks, and read existing or imported transcripts. Audio stays local.",
   "minimum_chrome_version": "116",
   "permissions": [
     "tabCapture",

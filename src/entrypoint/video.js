@@ -4,9 +4,9 @@
   if (globalThis.__amplifierVideoControls) return;
   globalThis.__amplifierVideoControls = true;
 
-  const storageKey = "playbackRate";
+  let storageKey;
+  const pendingPreferences = new Map();
   let desiredRate = 1;
-  let preferenceVersion = 0;
   const tracked = new Set();
   const rates = new WeakMap();
   const bookmarkSources = new WeakMap();
@@ -14,7 +14,7 @@
   let loop = null;
   let loopError = null;
   let acceleration = null;
-  const mediaEvents = ["play", "playing", "pause", "timeupdate", "seeking", "seeked", "ended", "durationchange", "progress"];
+  const mediaEvents = ["play", "playing", "pause", "timeupdate", "seeking", "seeked", "ended", "durationchange", "progress", "ratechange"];
   const normalize = (value) => {
     if (typeof value !== "number" || !Number.isFinite(value)) {
       throw new Error("Playback speed must be a finite number.");
@@ -93,11 +93,13 @@
   }
 
   function onSource(event) {
-    // A new source uses the global preference. Resuming an existing video
+    // A new source uses the saved preference. Resuming an existing video
     // keeps that tab's choice even if another tab has changed the preference.
     if (event.type === "loadedmetadata") onResetSource(event);
     else validateIdentity();
-    apply(event.currentTarget, event.type === "loadedmetadata" ? desiredRate : rates.get(event.currentTarget));
+    const video = event.currentTarget;
+    apply(video, event.type === "loadedmetadata"
+      ? desiredRate : rates.get(video));
     if (event.type === "loadedmetadata") {
       rememberBookmarkSource(event.currentTarget);
       notify();
@@ -345,17 +347,26 @@
     validateIdentity();
     const video = primaryVideo();
     const selected = loop?.video === video ? loop : null;
-    return { available: Boolean(video), rate: video?.playbackRate ?? desiredRate, savedRate: desiredRate,
+    return { available: Boolean(video),
+      rate: video?.playbackRate ?? desiredRate,
+      savedRate: desiredRate,
       currentTime: video?.currentTime ?? null,
       bookmarkKey: selectedBookmarkKey(video),
       loop: { a: selected?.a ?? null, b: selected?.b ?? null, active: selected?.b != null,
         error: loopError } };
   }
 
-  const ready = chrome.storage.local.get(storageKey).then((stored) => {
-    if (!preferenceVersion && typeof stored[storageKey] === "number" && Number.isFinite(stored[storageKey])) {
-      desiredRate = normalize(stored[storageKey]);
-    }
+  async function preferenceRequest(type, rate) {
+    const response = await chrome.runtime.sendMessage({ target: "sitePreferences", type, rate });
+    if (!response?.ok) throw new Error(response?.error || "Site preferences did not respond.");
+    return response.result;
+  }
+
+  const ready = preferenceRequest("loadRate").then((preference) => {
+    storageKey = preference.key;
+    const value = pendingPreferences.has(storageKey) ? pendingPreferences.get(storageKey) : preference.rate;
+    desiredRate = typeof value === "number" && Number.isFinite(value) ? normalize(value) : 1;
+    pendingPreferences.clear();
     scan();
     const observer = new MutationObserver((records) => {
       if (records.some((record) => record.type === "childList" || record.attributeName === "src")) scan();
@@ -378,10 +389,14 @@
   let chain = ready;
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !changes[storageKey]) return;
+    if (area !== "local") return;
+    if (!storageKey) {
+      for (const [key, change] of Object.entries(changes)) pendingPreferences.set(key, change.newValue);
+      return;
+    }
+    if (!changes[storageKey]) return;
     const value = changes[storageKey].newValue;
     desiredRate = typeof value === "number" && Number.isFinite(value) ? normalize(value) : 1;
-    preferenceVersion += 1;
     // Other tabs keep their current speed. New videos use the latest preference.
   });
 
@@ -413,7 +428,7 @@
       desiredRate = rate;
       try {
         for (const video of tracked) apply(video, rate);
-        await chrome.storage.local.set({ [storageKey]: rate });
+        await preferenceRequest("saveRate", rate);
       } catch (error) {
         desiredRate = previousRate;
         for (const previous of previousVideos) {
@@ -441,5 +456,10 @@
       notify();
     });
   }
+  globalThis.addEventListener("pageshow", () => {
+    scan();
+    for (const video of tracked) rememberBookmarkSource(video);
+    notify();
+  });
   ready.catch((error) => console.error("Video controls:", error));
 })();
