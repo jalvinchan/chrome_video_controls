@@ -1,0 +1,7 @@
+1
+00:00:00,000 --> 00:00:02,500
+Imported subtitles: flowers in the breeze.
+
+2
+00:00:02,500 --> 00:00:05,500
+This future line is available before the video reaches it.

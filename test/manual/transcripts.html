@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Controls — transcript check</title>
+<style>
+  body { max-width: 760px; margin: 40px auto; padding: 0 24px; font: 16px system-ui; }
+  video { width: 100%; background: #111; }
+  button { margin: 4px; padding: 8px 12px; }
+  output { display: block; margin: 16px 0; font-variant-numeric: tabular-nums; }
+</style>
+<h1>Transcript check</h1>
+<p>Open Video Controls from Chrome's toolbar and choose <strong>Transcript</strong>.
+The side panel should show both native caption lines while the video is still paused at zero.</p>
+<video controls preload="auto" src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4">
+  <track kind="captions" label="Test captions" srclang="en" src="captions.vtt">
+</video>
+<output id="state">Loading video…</output>
+<button data-time="1">Pause at first cue</button>
+<button data-time="3">Pause at second cue</button>
+<button id="replace">Replace video element</button>
+<p><a href="transcript.srt" download>Download the SRT import sample</a>, then import it in the panel.
+Search for “future”, jump to its timestamp, and reopen the panel to check persistence.</p>
+<p>Caption visibility should remain disabled until you enable it in the player's menu.
+Timestamp jumps should retain pause and speed. Amplification should stay off.</p>
+<script>
+  let video = document.querySelector('video');
+  function update() {
+    document.querySelector('#state').textContent = `Time ${video.currentTime.toFixed(2)}s · ${video.paused ? 'Paused' : 'Playing'} · Speed ${video.playbackRate}× · Captions ${video.textTracks[0]?.mode}`;
+  }
+  function bind() {
+    for (const event of ['loadedmetadata', 'timeupdate', 'ratechange', 'pause', 'play', 'seeked']) video.addEventListener(event, update);
+    video.textTracks.addEventListener('change', update);
+  }
+  for (const button of document.querySelectorAll('[data-time]')) button.addEventListener('click', () => {
+    video.pause(); video.currentTime = Number(button.dataset.time);
+  });
+  document.querySelector('#replace').addEventListener('click', () => {
+    video.pause();
+    const replacement = video.cloneNode(true);
+    video.replaceWith(replacement);
+    video = replacement;
+    bind(); update();
+  });
+  bind();
+</script>
+</html>

@@ -840,3 +840,65 @@ test("invalid, unavailable and stale bookmark seeks fail without moving playback
   assert.equal((await current.send({ type: "captureBookmark", key: "media:https://example.com/video.mp4" })).time, 0);
   assert.equal(video.seeks, 0);
 });
+
+test("native transcripts read all future cues and restore disabled tracks without changing playback", async () => {
+  const video = fakeVideo({ paused: true });
+  const track = { kind: "captions", id: "english", language: "en", label: "English", mode: "disabled",
+    cues: [{ startTime: 0, endTime: 5, text: "First" }, { startTime: 100, endTime: 105, text: "Future" }] };
+  const metadata = { track, readyState: 2 };
+  video.textTracks = [track, { kind: "metadata" }];
+  video.querySelectorAll = () => [metadata];
+  const current = await page({ [rateKey]: 3 }, [video]);
+  const list = await current.send({ type: "listTranscriptTracks", key: "media:https://example.com/video.mp4" });
+  assert.equal(list.length, 1);
+  const result = await current.send({ type: "readTranscriptTrack", key: "media:https://example.com/video.mp4", trackId: list[0].id });
+  assert.deepEqual(Array.from(result, (cue) => ({ ...cue })), [{ start: 0, end: 5, text: "First" }, { start: 100, end: 105, text: "Future" }]);
+  assert.equal(track.mode, "disabled");
+  assert.equal(video.currentTime, 0);
+  assert.equal(video.paused, true);
+  assert.equal(video.playbackRate, 3);
+  assert.equal(video.seeks, 0);
+  metadata.readyState = 3;
+  await assert.rejects(current.send({ type: "readTranscriptTrack", key: "media:https://example.com/video.mp4", trackId: list[0].id }), /could not load/);
+  assert.equal(track.mode, "disabled");
+  track.mode = "showing";
+  metadata.readyState = 2;
+  await current.send({ type: "readTranscriptTrack", key: "media:https://example.com/video.mp4", trackId: list[0].id });
+  assert.equal(track.mode, "showing");
+});
+
+test("native caption loading keeps timeline controls responsive and rejects stale video reads", async () => {
+  const video = fakeVideo();
+  const track = { kind: "subtitles", language: "en", label: "English", mode: "disabled", cues: null };
+  const metadata = { track, readyState: 1 };
+  video.textTracks = [track];
+  video.querySelectorAll = () => [metadata];
+  const current = await page({}, [video]);
+  const [listed] = await current.send({ type: "listTranscriptTracks", key: "media:https://example.com/video.mp4" });
+  const pending = current.send({ type: "readTranscriptTrack", key: "media:https://example.com/video.mp4", trackId: listed.id });
+  const outcome = assert.rejects(pending, /new video|video changed|subtitle track changed/);
+  await current.send({ type: "setRate", rate: 2 });
+  assert.equal(track.mode, "hidden");
+  assert.equal((await current.send({ type: "snapshot" })).rate, 2);
+  video.currentSrc = "https://example.com/other.mp4";
+  video.fire("loadedmetadata");
+  current.navigate();
+  current.tick();
+  await outcome;
+  assert.equal(track.mode, "disabled");
+});
+
+test("transcript jumps retain pause/rate and the same loop rules, and reject other videos", async () => {
+  const video = fakeVideo({ paused: true });
+  const current = await page({ [rateKey]: 3 }, [video]);
+  await current.send({ type: "seekTranscript", key: "media:https://example.com/video.mp4", time: 100 });
+  assert.equal(video.currentTime, 100);
+  assert.equal(video.paused, true);
+  assert.equal(video.playbackRate, 3);
+  assert.equal(video.preservesPitch, true);
+  video.fire("seeked");
+  await assert.rejects(current.send({ type: "seekTranscript", key: "media:https://example.com/other.mp4", time: 1 }), /video changed/);
+  video.seekable.length = 0;
+  await assert.rejects(current.send({ type: "seekTranscript", key: "media:https://example.com/video.mp4", time: 1 }), /seekable/);
+  assert.equal(video.currentTime, 100);
+});

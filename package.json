@@ -1,6 +1,6 @@
 {
   "name": "video-controls",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "type": "module",
   "description": "Control video speed, boost volume, repeat sections, save bookmarks, and read existing or imported transcripts. Audio stays local.",

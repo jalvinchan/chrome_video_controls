@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Video Controls — Transcript</title>
+    <link rel="stylesheet" href="base.css">
+    <link rel="stylesheet" href="transcript.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Video Controls</p>
+        <h1>Transcript</h1>
+        <p id="title" class="video-title">Open a video to get started</p>
+        <label class="track-label" for="track">Subtitle track</label>
+        <select id="track" disabled><option>No caption tracks</option></select>
+        <div class="actions">
+          <button id="refresh" type="button" disabled>Refresh</button>
+          <button id="import" type="button" disabled>Import SRT/VTT</button>
+          <button id="remove" type="button" hidden>Remove import</button>
+          <input id="file" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden>
+        </div>
+        <label class="sr-only" for="search">Search transcript</label>
+        <input id="search" type="search" placeholder="Search transcript" disabled>
+        <label class="follow-label"><input id="follow" type="checkbox" checked> Follow playback</label>
+        <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+        <p id="summary" class="summary"></p>
+      </header>
+      <ol id="lines" aria-label="Transcript lines"></ol>
+    </main>
+    <script type="module" src="../entrypoint/transcript.js"></script>
+  </body>
+</html>

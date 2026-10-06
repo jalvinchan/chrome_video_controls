@@ -51,3 +51,28 @@ controls, select 1.5×, then close it and focus the page.
    Alt/Option, Command, and Shift combinations should not start acceleration.
 5. With an A–B loop active, hold and release R: the loop should remain active,
    bookmarks should remain, and amplification should stay off.
+
+## Transcript side panel
+
+Open `http://127.0.0.1:8765/transcripts.html` using the server above. This public
+sample has a local caption file, initially disabled. Stop amplification before
+reloading the extension; reload the sample page after an extension reload.
+
+1. Open the toolbar popup and choose **Transcript**. Both caption lines should
+   appear while the video is paused at zero, including the future line.
+2. Click the second line. The sample should report time 2.50 s, still paused,
+   with the same playback rate and captions still disabled. Amplification stays off.
+3. Import [transcript.srt](transcript.srt) from this directory. Its second line
+   should appear immediately. Search for “future”, click that result, clear the
+   search, and switch between imported and native tracks.
+4. Close/reopen the panel and reload the sample page. Open the toolbar popup
+   after a page reload to grant access. The saved import should return. Try
+   importing [captions.vtt](captions.vtt) too, then an invalid file: a failed import
+   must leave the previous saved copy usable.
+5. Play/pause at 1× and 3×. Check current-line highlighting, follow scrolling,
+   disabling Follow playback by scrolling manually, and clicking future lines.
+6. Replace the video element and switch tabs. Old transcript loads must not
+   appear in another video's panel; unavailable pages should offer an access
+   explanation. Jumps must never seek the previous video after navigation.
+7. **Remove import** should return to the native track and preserve bookmarks,
+   speed, volume, and the original subtitle appearance.

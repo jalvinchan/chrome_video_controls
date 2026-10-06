@@ -68,6 +68,12 @@ async function boot() {
     }
   }
   view.bind({
+    onTranscript: () => {
+      // Open directly in the click handler to retain Chrome's user gesture.
+      globalThis.chrome.sidePanel.open({ windowId: view.state.tab.windowId }).then(() => window.close()).catch((error) => {
+        view.setStatus({ message: error.message, tone: "error" });
+      });
+    },
     onRefresh: () => sync?.refresh(),
     onToggle: async () => {
       view.setBusy(true);

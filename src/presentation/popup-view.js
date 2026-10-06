@@ -40,6 +40,7 @@ export class PopupView {
     this.onSpeed = handlers.onSpeed ?? (() => {});
     this.onReset = handlers.onReset ?? (() => {});
     this.onShortcuts = handlers.onShortcuts ?? (() => {});
+    this.onTranscript = handlers.onTranscript ?? (() => {});
     this.onRefresh = handlers.onRefresh ?? (() => {});
     this.onLoop = handlers.onLoop ?? (() => {});
     this.onBookmarkSave = handlers.onBookmarkSave ?? (() => {});
@@ -137,6 +138,8 @@ export class PopupView {
     this.resetButton.addEventListener("click", () => this.onReset());
     const shortcutsButton = h("button", { type: "button" }, "Shortcuts");
     shortcutsButton.addEventListener("click", () => this.onShortcuts());
+    const transcriptButton = h("button", { type: "button" }, "Transcript");
+    transcriptButton.addEventListener("click", () => this.onTranscript());
     this.slider.addEventListener("input", () => {
       this.#paintLevel();
       this.onLevel(Number(this.slider.value));
@@ -177,7 +180,7 @@ export class PopupView {
         ),
         this.bookmarkStatus,
       ),
-      h("div", { class: "footer-actions" }, this.resetButton, shortcutsButton),
+      h("div", { class: "footer-actions" }, transcriptButton, this.resetButton, shortcutsButton),
       h("details", { class: "disclosure" },
         h("summary", {}, h("h2", {}, "Help & tips")),
         h("div", { class: "disclosure-content" },

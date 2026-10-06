@@ -187,16 +187,16 @@
     return recorded?.key === key && recorded?.source === sourceOf(video) ? key : null;
   }
 
-  function bookmarkContext(expectedKey) {
+  function bookmarkContext(expectedKey, tool = "bookmarks") {
     const video = primaryVideo();
-    if (!video) throw new Error("No video found. Open a video to use bookmarks.");
+    if (!video) throw new Error(`No video found. Open a video to use ${tool}.`);
     const key = bookmarkKey(video);
-    if (!key) throw new Error("Bookmarks need a loaded on-demand video with a stable video address; live streams aren't supported.");
+    if (!key) throw new Error(`${tool === "bookmarks" ? "Bookmarks" : "Transcripts"} need a loaded on-demand video with a stable video address; live streams aren't supported.`);
     const recorded = bookmarkSources.get(video);
     if (recorded?.key !== key || recorded.source !== sourceOf(video)) {
-      throw new Error("Wait for the new video to load, then try the bookmark again.");
+      throw new Error(`Wait for the new video to load, then try the ${tool === "bookmarks" ? "bookmark" : "transcript"} again.`);
     }
-    if (expectedKey !== key) throw new Error("The video changed. Choose a bookmark for the current video.");
+    if (expectedKey !== key) throw new Error(`The video changed. Choose a ${tool === "bookmarks" ? "bookmark" : "transcript"} for the current video.`);
     return { video, key };
   }
 
@@ -210,19 +210,74 @@
     return { key: context.key, time: video.currentTime };
   }
 
-  function seekBookmark(key, time) {
-    const { video } = bookmarkContext(key);
-    if (!Number.isFinite(time) || time < 0 || time > video.duration) throw new Error("This bookmark is outside the video's duration.");
-    if (video.seeking) throw new Error("Wait for the current seek to finish, then choose the bookmark again.");
+  function seekBookmark(key, time, tool = "bookmark") {
+    const { video } = bookmarkContext(key, tool === "bookmark" ? "bookmarks" : "transcripts");
+    if (!Number.isFinite(time) || time < 0 || time > video.duration) throw new Error(`This ${tool} is outside the video's duration.`);
+    if (video.seeking) throw new Error(`Wait for the current seek to finish, then choose the ${tool} again.`);
     const ranges = video.seekable;
     let seekable = false;
     for (let i = 0; i < (ranges?.length ?? 0); i += 1) {
       if (time >= ranges.start(i) && time <= ranges.end(i)) seekable = true;
     }
-    if (!seekable) throw new Error("That bookmark isn't seekable yet. Wait for the video to load, then try again.");
+    if (!seekable) throw new Error(`That ${tool} isn't seekable yet. Wait for the video to load, then try again.`);
     video.currentTime = time;
     if (loop?.video === video && loop.b != null && (time < loop.a || time >= loop.b)) clearLoop();
     return snapshot();
+  }
+
+  function transcriptTracks(video) {
+    return [...(video.textTracks ?? [])].map((track, index) => ({ track,
+      id: `native:${index}:${track.id}:${track.language}:${track.label}`,
+      label: track.label || track.language || `Track ${index + 1}`,
+    })).filter(({ track }) => track.kind === "captions" || track.kind === "subtitles");
+  }
+
+  function listTranscriptTracks(key) {
+    const { video } = bookmarkContext(key, "transcripts");
+    const elements = [...(video.querySelectorAll?.("track") ?? [])];
+    return transcriptTracks(video).map(({ id, label, track }) => ({ id, label, language: track.language,
+      selected: track.mode === "showing", complete: elements.some((element) => element.track === track) }));
+  }
+
+  const pendingTracks = new WeakMap();
+  async function readTranscriptTrack(key, trackId) {
+    const { video } = bookmarkContext(key, "transcripts");
+    const entry = transcriptTracks(video).find((item) => item.id === trackId);
+    if (!entry) throw new Error("The subtitle track changed. Refresh the tracks and try again.");
+    const { track } = entry;
+    // Concurrent panels share one temporary load and one restoration.
+    if (!pendingTracks.has(track)) {
+      const operation = (async () => {
+        const previous = track.mode;
+        try {
+          if (previous === "disabled") track.mode = "hidden";
+          const element = [...(video.querySelectorAll?.("track") ?? [])].find((item) => item.track === track);
+          for (let attempt = 0; attempt < 80; attempt += 1) {
+            if (element?.readyState === 3) throw new Error("The subtitle track could not load. Try Import SRT/VTT instead.");
+            if (track.cues?.length && (!element || element.readyState === 2)) {
+              if (track.cues.length > 20000) throw new Error("Use a transcript with at most 20,000 lines.");
+              const cues = [...track.cues].map((cue) => ({ start: cue.startTime, end: cue.endTime, text: cue.text }));
+              if (JSON.stringify(cues).length > 2 * 1024 * 1024) throw new Error("Use a transcript smaller than 2 MB.");
+              return cues;
+            }
+            if (element?.readyState === 2) throw new Error("No subtitle lines were found in this track.");
+            bookmarkContext(key, "transcripts");
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          throw new Error("The full subtitle track is not available yet. Refresh or import an SRT/VTT file.");
+        } finally {
+          if (previous === "disabled" && track.mode === "hidden") track.mode = previous;
+        }
+      })();
+      pendingTracks.set(track, operation);
+      operation.finally(() => pendingTracks.delete(track)).catch(() => {});
+    }
+    const cues = await pendingTracks.get(track);
+    if (bookmarkContext(key, "transcripts").video !== video
+      || !transcriptTracks(video).some((item) => item.track === track && item.id === trackId)) {
+      throw new Error("The video or subtitle track changed. Refresh and try again.");
+    }
+    return cues;
   }
 
   function seekRange(video, a, b = a) {
@@ -402,9 +457,20 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.target !== "video") return;
+    // Reading a disabled track can await network loading. Keep playback controls
+    // and timeline snapshots responsive while that read is pending.
+    if (message.type === "readTranscriptTrack") {
+      ready.then(() => { scan(); return readTranscriptTrack(message.key, message.trackId); }).then(
+        (result) => sendResponse({ ok: true, result }),
+        (error) => sendResponse({ ok: false, error: error.message }),
+      );
+      return true;
+    }
     const operation = chain.then(async () => {
       scan();
       if (message.type === "snapshot") return snapshot();
+      if (message.type === "listTranscriptTracks") return listTranscriptTracks(message.key);
+      if (message.type === "seekTranscript") return seekBookmark(message.key, message.time, "transcript line");
       if (message.type === "captureBookmark") return captureBookmark(message.key);
       if (message.type === "seekBookmark") return seekBookmark(message.key, message.time);
       if (message.type === "setLoopA") return setPoint("a");

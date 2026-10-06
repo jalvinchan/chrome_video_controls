@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Video Controls",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Control video speed, boost volume, repeat sections, save bookmarks, and read existing or imported transcripts. Audio stays local.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -9,8 +9,12 @@
     "offscreen",
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "sidePanel"
   ],
+  "side_panel": {
+    "default_path": "src/presentation/transcript.html"
+  },
   "commands": {
     "speed-up": {
       "suggested_key": {

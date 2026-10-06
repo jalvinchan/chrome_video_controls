@@ -30,6 +30,13 @@ export class ChromeVideoStage {
 
   seekBookmark(tabId, key, time) { return this.#send(tabId, { type: "seekBookmark", key, time }); }
 
+  listTranscriptTracks(tabId, key) { return this.#send(tabId, { type: "listTranscriptTracks", key }); }
+
+  readTranscriptTrack(tabId, key, trackId) {
+    return this.#deliver(tabId, { type: "readTranscriptTrack", key, trackId });
+  }
+
+  seekTranscript(tabId, key, time) { return this.#send(tabId, { type: "seekTranscript", key, time }); }
 
   #send(tabId, message) {
     const operation = this.chain.then(() => this.#deliver(tabId, message));
