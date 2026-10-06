@@ -26,6 +26,10 @@ export class ChromeVideoStage {
 
   resetControls(tabId) { return this.#send(tabId, { type: "resetControls" }); }
 
+  captureBookmark(tabId, key) { return this.#send(tabId, { type: "captureBookmark", key }); }
+
+  seekBookmark(tabId, key, time) { return this.#send(tabId, { type: "seekBookmark", key, time }); }
+
   #send(tabId, message) {
     const operation = this.chain.then(() => this.#deliver(tabId, message));
     this.chain = operation.catch(() => {});

@@ -15,6 +15,10 @@ export class PopupView {
     this.state = null;
     this.statusMessage = null;
     this.loopStatusMessage = null;
+    this.bookmarkStatusMessage = null;
+    this.bookmarkBusy = false;
+    this.bookmarkButtons = [];
+    this.bookmarkSignature = null;
     this.slider = null;
     this.readout = null;
     this.tab = null;
@@ -38,6 +42,9 @@ export class PopupView {
     this.onShortcuts = handlers.onShortcuts ?? (() => {});
     this.onRefresh = handlers.onRefresh ?? (() => {});
     this.onLoop = handlers.onLoop ?? (() => {});
+    this.onBookmarkSave = handlers.onBookmarkSave ?? (() => {});
+    this.onBookmarkSeek = handlers.onBookmarkSeek ?? (() => {});
+    this.onBookmarkRemove = handlers.onBookmarkRemove ?? (() => {});
   }
 
   render(state) {
@@ -109,6 +116,20 @@ export class PopupView {
       button.addEventListener("click", () => this.onLoop(action));
       return { action, button };
     });
+    this.bookmarkNote = h("input", {
+      type: "text", maxlength: "250", class: "bookmark-note",
+      "aria-label": "Bookmark note (optional)", placeholder: "Note (optional)",
+    });
+    this.bookmarkSave = h("button", { type: "button" }, "Save time");
+    this.bookmarkSave.addEventListener("click", () => this.onBookmarkSave(this.bookmarkNote.value));
+    this.bookmarkNote.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.isComposing && !this.bookmarkSave.disabled) {
+        event.preventDefault();
+        this.onBookmarkSave(this.bookmarkNote.value);
+      }
+    });
+    this.bookmarkList = h("ul", { class: "bookmark-list", "aria-label": "Saved timestamps" });
+    this.bookmarkStatus = h("p", { class: "note", role: "status", "aria-live": "polite" });
     this.resetButton = h("button", { type: "button", title: "Reset speed to 1×, gain to 0 dB, and clear the loop" }, "Reset controls");
     this.resetButton.addEventListener("click", () => this.onReset());
     const shortcutsButton = h("button", { type: "button" }, "Shortcuts");
@@ -139,6 +160,12 @@ export class PopupView {
         h("div", { class: "loop-actions" }, this.loopButtons.map(({ button }) => button)),
         this.loopStatus,
       ),
+      h("section", { class: "control-section", "aria-label": "Timestamp bookmarks" },
+        h("h2", {}, "Bookmarks"),
+        h("div", { class: "bookmark-entry" }, this.bookmarkNote, this.bookmarkSave),
+        this.bookmarkList,
+        this.bookmarkStatus,
+      ),
       h("div", { class: "footer-actions" }, this.resetButton, shortcutsButton),
       h("p", { class: "note" }, "Speed: Alt + Shift + ← / →. Volume: Alt + Shift + ↓ / ↑. On Mac, Alt is Option."),
       h("p", { class: "note" }, "Chrome shows a sharing indicator while a tab is amplified. Audio is not recorded."),
@@ -147,6 +174,10 @@ export class PopupView {
   }
 
   update(state) {
+    if (this.state?.bookmarks?.key !== state.bookmarks?.key) {
+      this.bookmarkStatusMessage = null;
+      if (this.bookmarkNote) this.bookmarkNote.value = "";
+    }
     if (this.state?.currentTabId !== state.currentTabId
       || this.state?.video?.loop?.a !== state.video?.loop?.a
       || this.state?.video?.loop?.b !== state.video?.loop?.b) this.loopStatusMessage = null;
@@ -165,6 +196,7 @@ export class PopupView {
     this.speedStatus.textContent = video.error || (video.available ? "" : "No video found.");
     this.speedStatus.hidden = !this.speedStatus.textContent;
     this.#paintLoop();
+    this.#paintBookmarks();
     this.resetButton.disabled = this.busy;
     const onThisTab = state.live && state.tabId === state.currentTabId;
     if (onThisTab || (state.blocked && state.live)) this.button.textContent = "Stop";
@@ -198,6 +230,16 @@ export class PopupView {
     this.#paintLoop();
   }
 
+  setBookmarkStatus(status) {
+    this.bookmarkStatusMessage = status;
+    this.#paintBookmarks();
+  }
+
+  setBookmarkBusy(busy) {
+    this.bookmarkBusy = busy;
+    this.#paintBookmarks();
+  }
+
   #paintLevel() {
     const label = levelLabel(Number(this.slider.value));
     this.readout.textContent = label;
@@ -228,6 +270,40 @@ export class PopupView {
     this.loopStatus.textContent = this.loopStatusMessage?.message || loop.error || "";
     this.loopStatus.hidden = !this.loopStatus.textContent;
     this.loopStatus.dataset.tone = this.loopStatusMessage?.tone || (loop.error ? "error" : "");
+  }
+
+  #paintBookmarks() {
+    if (!this.bookmarkList || !this.state) return;
+    const { key, items = [], error } = this.state.bookmarks ?? {};
+    const signature = JSON.stringify([key, items]);
+    // Keep focused timestamp/remove buttons in place during unrelated refreshes.
+    if (signature !== this.bookmarkSignature) {
+      this.bookmarkSignature = signature;
+      this.bookmarkButtons = [];
+      this.bookmarkList.replaceChildren(...items.map((item) => {
+        const jump = h("button", { type: "button", class: "bookmark-jump",
+          "aria-label": `Jump to ${timestamp(item.time)}${item.note ? `: ${item.note}` : ""}` },
+          h("span", { class: "bookmark-time" }, timestamp(item.time)),
+          item.note ? h("span", { class: "bookmark-label" }, item.note) : null,
+        );
+        const remove = h("button", { type: "button", class: "bookmark-remove",
+          "aria-label": `Remove bookmark at ${timestamp(item.time)}${item.note ? `: ${item.note}` : ""}` }, "Remove");
+        jump.addEventListener("click", () => this.onBookmarkSeek({ ...item, key }));
+        remove.addEventListener("click", () => this.onBookmarkRemove({ ...item, key }));
+        this.bookmarkButtons.push(jump, remove);
+        return h("li", {}, jump, remove);
+      }));
+    }
+    this.bookmarkList.hidden = !items.length;
+    this.bookmarkSave.disabled = this.bookmarkBusy || !key || Boolean(error);
+    this.bookmarkNote.disabled = !key;
+    for (const button of this.bookmarkButtons) button.disabled = this.bookmarkBusy;
+    const message = this.bookmarkStatusMessage?.message || error;
+    this.bookmarkStatus.textContent = message || (!key
+      ? (this.state.video?.available ? "Bookmarks need a loaded video with a stable address." : "No video found.")
+      : items.length ? "" : "No bookmarks yet.");
+    this.bookmarkStatus.dataset.tone = message ? "error" : "";
+    this.bookmarkStatus.hidden = !this.bookmarkStatus.textContent;
   }
 
   #paintStatus(state) {

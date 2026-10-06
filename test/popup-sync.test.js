@@ -32,6 +32,7 @@ function setup(read) {
     apply: (state) => applied.push(state),
     report: (error) => errors.push(error.message),
     currentTabId: () => 7,
+    currentBookmarkKey: () => "media:1",
   });
   return { sync, chrome, events, applied, errors, reads: () => reads };
 }
@@ -78,6 +79,16 @@ test("loop notifications refresh only the active tab without a storage change", 
   context.chrome.runtime.onMessage.emit({ type: "videoControlsChanged" }, {});
   assert.equal(context.reads(), 1);
   context.chrome.runtime.onMessage.emit({ type: "videoControlsChanged" }, { tab: { id: 7 } });
+  await context.sync.running;
+  assert.equal(context.reads(), 2);
+});
+
+test("bookmark changes refresh this video's list without reacting to unrelated videos", async () => {
+  const context = setup();
+  await context.sync.start();
+  context.chrome.storage.onChanged.emit({ "videoBookmarks:media:2": {} }, "local");
+  assert.equal(context.reads(), 1);
+  context.chrome.storage.onChanged.emit({ "videoBookmarks:media:1": {} }, "local");
   await context.sync.running;
   assert.equal(context.reads(), 2);
 });

@@ -3,9 +3,11 @@ import { captureRefusal } from "../model/capture-target.js";
 import { PopupView } from "../presentation/popup-view.js";
 import { ChromeVideoStage } from "../video/chrome-video-stage.js";
 import { PopupSync } from "../app/popup-sync.js";
+import { BookmarkClient } from "../app/bookmark-client.js";
 
 const client = new AmplifierClient(globalThis.chrome.runtime);
 const video = new ChromeVideoStage(globalThis.chrome);
+const bookmarks = new BookmarkClient(globalThis.chrome.runtime);
 const view = new PopupView(document.querySelector("#app"));
 
 async function currentTab() {
@@ -28,6 +30,12 @@ async function present() {
       }
     })(),
   ]);
+  const key = videoState.bookmarkKey;
+  let bookmarkState = { key: key ?? null, items: [] };
+  if (key) {
+    try { bookmarkState.items = await bookmarks.list(key); }
+    catch (error) { bookmarkState.error = error.message; }
+  }
   return {
     ...state,
     currentTabId: typeof tab.id === "number" ? tab.id : null,
@@ -35,6 +43,7 @@ async function present() {
     currentUrl: tab.url || "",
     blocked,
     video: videoState,
+    bookmarks: bookmarkState,
     tab,
   };
 }
@@ -43,6 +52,18 @@ async function boot() {
   const state = await present();
   view.render(state);
   let sync;
+  async function bookmarkAction(key, work) {
+    view.setBookmarkStatus(null);
+    view.setBookmarkBusy(true);
+    try {
+      await work();
+      await sync.refresh();
+    } catch (error) {
+      if (view.state.bookmarks?.key === key) view.setBookmarkStatus({ message: error.message, tone: "error" });
+    } finally {
+      view.setBookmarkBusy(false);
+    }
+  }
   view.bind({
     onRefresh: () => sync?.refresh(),
     onToggle: async () => {
@@ -103,6 +124,19 @@ async function boot() {
         view.setBusy(false);
       }
     },
+    onBookmarkSave: (note) => {
+      const { currentTabId, bookmarks: state } = view.state;
+      return bookmarkAction(state.key, async () => {
+        const point = await video.captureBookmark(currentTabId, state.key);
+        await bookmarks.save(point.key, point.time, note);
+        if (view.state.bookmarks?.key === point.key && view.bookmarkNote.value === note) view.bookmarkNote.value = "";
+      });
+    },
+    onBookmarkSeek: ({ key, time }) => {
+      const tabId = view.state.currentTabId;
+      return bookmarkAction(key, () => video.seekBookmark(tabId, key, time));
+    },
+    onBookmarkRemove: ({ key, id }) => bookmarkAction(key, () => bookmarks.remove(key, id)),
     onReset: async () => {
       view.setBusy(true);
       try {
@@ -134,6 +168,7 @@ async function boot() {
     apply: (next) => view.update(next),
     report: (error) => view.setStatus({ message: error.message, tone: "error" }),
     currentTabId: () => view.state.currentTabId,
+    currentBookmarkKey: () => view.state.bookmarks?.key,
   });
   await sync.start();
 }

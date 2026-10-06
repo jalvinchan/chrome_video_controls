@@ -3,15 +3,25 @@ import { handleAmplifierMessage } from "../app/amplifier-messages.js";
 import { isAmplifierMessage } from "../model/message-kinds.js";
 import { ChromeVideoStage } from "../video/chrome-video-stage.js";
 import { handleVideoCommand } from "../app/video-commands.js";
+import { ChromeBookmarkRepository } from "../storage/chrome-bookmark-repository.js";
+import { handleBookmarkMessage } from "../app/bookmark-messages.js";
 
 const app = createAmplifierApp(globalThis.chrome);
 const video = new ChromeVideoStage(globalThis.chrome);
+const bookmarks = new ChromeBookmarkRepository(globalThis.chrome.storage.local);
 
 function report(error) {
   console.error(error);
 }
 
 globalThis.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.target === "bookmarks") {
+    handleBookmarkMessage(bookmarks, message).then(
+      (result) => sendResponse({ ok: true, result }),
+      (error) => sendResponse({ ok: false, error: error.message }),
+    );
+    return true;
+  }
   if (!isAmplifierMessage(message)) return;
   handleAmplifierMessage(app, message).then(
     (result) => sendResponse({ ok: true, result }),

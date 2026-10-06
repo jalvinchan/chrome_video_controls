@@ -57,7 +57,18 @@ body { width: 340px; }
 .loop-actions button { flex: 1; padding: 6px 8px; font-size: 13px; }
 .loop-readout { margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 .loop-readout[data-active="true"] { color: var(--brass); }
-.loop-actions + .note[data-tone="error"] { color: var(--bad); }
+.note[data-tone="error"] { color: var(--bad); }
+
+.bookmark-entry { display: flex; gap: 6px; }
+.bookmark-note { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-2); font-size: 13px; }
+.bookmark-entry button { flex-shrink: 0; padding: 6px 10px; font-size: 13px; }
+.bookmark-list { list-style: none; padding: 0; margin: 0; max-height: 160px; overflow-y: auto; }
+.bookmark-list li { display: flex; gap: 6px; margin-bottom: 6px; }
+.bookmark-list li:last-child { margin-bottom: 0; }
+.bookmark-jump { flex: 1; min-width: 0; text-align: left; border-radius: 8px; padding: 6px 8px; font-size: 13px; }
+.bookmark-time { font-variant-numeric: tabular-nums; }
+.bookmark-label { display: block; overflow-wrap: anywhere; color: var(--ink-soft); }
+.bookmark-remove { align-self: center; padding: 5px 8px; font-size: 12px; }
 .presets button { flex: 1; padding: 5px 8px; }
 .presets button[aria-pressed="true"] { border-color: var(--brass); color: var(--brass); }
 .footer-actions button { flex: 1; font-size: 13px; }

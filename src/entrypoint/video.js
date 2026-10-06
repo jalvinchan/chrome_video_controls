@@ -9,6 +9,8 @@
   let preferenceVersion = 0;
   const tracked = new Set();
   const rates = new WeakMap();
+  const bookmarkSources = new WeakMap();
+  let shownBookmarkKey = null;
   let loop = null;
   let loopError = null;
   const mediaEvents = ["play", "playing", "pause", "timeupdate", "seeking", "seeked", "ended", "durationchange", "progress"];
@@ -41,6 +43,7 @@
     for (const video of document.querySelectorAll("video")) {
       if (tracked.has(video)) continue;
       tracked.add(video);
+      rememberBookmarkSource(video);
       video.addEventListener("loadedmetadata", onSource);
       video.addEventListener("play", onSource);
       video.addEventListener("emptied", onResetSource);
@@ -49,6 +52,11 @@
       apply(video);
     }
     validateIdentity();
+    const key = selectedBookmarkKey();
+    if (key !== shownBookmarkKey) {
+      shownBookmarkKey = key;
+      notify();
+    }
   }
 
   function onSource(event) {
@@ -57,6 +65,10 @@
     apply(event.currentTarget, event.type === "loadedmetadata" ? desiredRate : rates.get(event.currentTarget));
     if (event.type === "loadedmetadata") onResetSource(event);
     else validateIdentity();
+    if (event.type === "loadedmetadata") {
+      rememberBookmarkSource(event.currentTarget);
+      notify();
+    }
   }
 
   function notify() {
@@ -91,6 +103,88 @@
 
   function onResetSource(event) {
     if (loop?.video === event.currentTarget) clearLoop();
+    if (event.type !== "loadedmetadata") {
+      bookmarkSources.delete(event.currentTarget);
+      notify();
+    }
+  }
+
+  function bookmarkIdentity(video) {
+    const page = new URL(document.URL);
+    const source = video.currentSrc;
+    if (!source) return null;
+    const media = new URL(source, document.URL);
+    if (media.protocol === "blob:") {
+      // A temporary media address changes on reload. A single-video page's
+      // address is a durable fallback; retain query parameters that identify
+      // its content, and hash routes used by client-side navigation.
+      if (!["https:", "http:"].includes(page.protocol)
+        || [...tracked].filter((item) => item.isConnected).length !== 1) return null;
+      if (!page.hash.startsWith("#/") && !page.hash.startsWith("#!")) page.hash = "";
+      page.searchParams.sort();
+      const key = `page:${page.href}`;
+      return key.length <= 4096 ? key : null;
+    }
+    if (media.protocol !== "https:" && media.protocol !== "http:") return null;
+    media.hash = "";
+    const key = `media:${media.href}`;
+    return key.length <= 4096 ? key : null;
+  }
+
+  function bookmarkKey(video) {
+    if (!video || !Number.isFinite(video.duration) || video.duration <= 0
+      || video.readyState < 1) return null;
+    return bookmarkIdentity(video);
+  }
+
+  function rememberBookmarkSource(video) {
+    // Record the loaded source so stale commands cannot target a replacement.
+    bookmarkSources.set(video, { key: bookmarkIdentity(video), source: sourceOf(video) });
+  }
+
+  function selectedBookmarkKey(video = primaryVideo()) {
+    if (!video) return null;
+    const key = bookmarkKey(video);
+    const recorded = bookmarkSources.get(video);
+    return recorded?.key === key && recorded?.source === sourceOf(video) ? key : null;
+  }
+
+  function bookmarkContext(expectedKey) {
+    const video = primaryVideo();
+    if (!video) throw new Error("No video found. Open a video to use bookmarks.");
+    const key = bookmarkKey(video);
+    if (!key) throw new Error("Bookmarks need a loaded on-demand video with a stable video address; live streams aren't supported.");
+    const recorded = bookmarkSources.get(video);
+    if (recorded?.key !== key || recorded.source !== sourceOf(video)) {
+      throw new Error("Wait for the new video to load, then try the bookmark again.");
+    }
+    if (expectedKey !== key) throw new Error("The video changed. Choose a bookmark for the current video.");
+    return { video, key };
+  }
+
+  function captureBookmark(key) {
+    const context = bookmarkContext(key);
+    const video = context.video;
+    if (video.seeking) throw new Error("Wait for the current seek to finish, then save the bookmark.");
+    if (!Number.isFinite(video.currentTime) || video.currentTime < 0 || video.currentTime > video.duration) {
+      throw new Error("Choose a time within the video's duration.");
+    }
+    return { key: context.key, time: video.currentTime };
+  }
+
+  function seekBookmark(key, time) {
+    const { video } = bookmarkContext(key);
+    if (!Number.isFinite(time) || time < 0 || time > video.duration) throw new Error("This bookmark is outside the video's duration.");
+    if (video.seeking) throw new Error("Wait for the current seek to finish, then choose the bookmark again.");
+    const ranges = video.seekable;
+    let seekable = false;
+    for (let i = 0; i < (ranges?.length ?? 0); i += 1) {
+      if (time >= ranges.start(i) && time <= ranges.end(i)) seekable = true;
+    }
+    if (!seekable) throw new Error("That bookmark isn't seekable yet. Wait for the video to load, then try again.");
+    video.currentTime = time;
+    if (loop?.video === video && loop.b != null && (time < loop.a || time >= loop.b)) clearLoop();
+    return snapshot();
   }
 
   function seekRange(video, a, b = a) {
@@ -217,6 +311,7 @@
     const selected = loop?.video === video ? loop : null;
     return { available: Boolean(video), rate: video?.playbackRate ?? desiredRate, savedRate: desiredRate,
       currentTime: video?.currentTime ?? null,
+      bookmarkKey: selectedBookmarkKey(video),
       loop: { a: selected?.a ?? null, b: selected?.b ?? null, active: selected?.b != null,
         error: loopError } };
   }
@@ -227,7 +322,6 @@
     }
     scan();
     const observer = new MutationObserver((records) => {
-      // Ignore unrelated class changes across the page (e.g. caption styling).
       if (records.some((record) => record.type === "childList" || record.attributeName === "src")) scan();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true,
@@ -248,6 +342,8 @@
     const operation = chain.then(async () => {
       scan();
       if (message.type === "snapshot") return snapshot();
+      if (message.type === "captureBookmark") return captureBookmark(message.key);
+      if (message.type === "seekBookmark") return seekBookmark(message.key, message.time);
       if (message.type === "setLoopA") return setPoint("a");
       if (message.type === "setLoopB") return setPoint("b");
       if (message.type === "clearLoop") { clearLoop(); return snapshot(); }
@@ -289,7 +385,11 @@
     return true;
   });
   for (const event of ["popstate", "hashchange", "pagehide"]) {
-    globalThis.addEventListener(event, () => clearLoop());
+    globalThis.addEventListener(event, () => {
+      clearLoop();
+      for (const video of tracked) bookmarkSources.delete(video);
+      notify();
+    });
   }
   ready.catch((error) => console.error("Video controls:", error));
 })();

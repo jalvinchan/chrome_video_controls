@@ -1,15 +1,18 @@
+import { BOOKMARK_PREFIX } from "../storage/chrome-bookmark-repository.js";
+
 const SETTINGS = new Set(["playbackRate", "sliderValue", "tabId", "title"]);
 
 // Refresh on events, not a timer. Read actual video state because a saved speed
 // is a preference for new videos, not necessarily the speed of this tab.
 export class PopupSync {
-  constructor({ chrome, window, read, apply, report, currentTabId }) {
-    Object.assign(this, { chrome, window, read, apply, report, currentTabId });
+  constructor({ chrome, window, read, apply, report, currentTabId, currentBookmarkKey = () => null }) {
+    Object.assign(this, { chrome, window, read, apply, report, currentTabId, currentBookmarkKey });
     this.active = false;
     this.dirty = false;
     this.running = null;
     this.onStorage = (changes, area) => {
-      if (area === "local" && Object.keys(changes).some((key) => SETTINGS.has(key))) this.refresh();
+      if (area === "local" && Object.keys(changes).some((key) => SETTINGS.has(key)
+        || key === BOOKMARK_PREFIX + this.currentBookmarkKey())) this.refresh();
     };
     this.onMessage = (message, sender) => {
       if (message?.type === "controlsChanged") this.refresh();

@@ -16,7 +16,7 @@ function fakeVideo({ width = 640, paused = false } = {}) {
   let time = 0;
   return {
     isConnected: true, paused, ended: false, playbackRate: 1, defaultPlaybackRate: 1,
-    preservesPitch: false, duration: 120, seeking: false, currentSrc: "https://example.com/video.mp4",
+    preservesPitch: false, duration: 120, readyState: 4, seeking: false, currentSrc: "https://example.com/video.mp4",
     seekable: { length: 1, start: () => 0, end: () => 120 }, seeks: 0, plays: 0,
     get currentTime() { return time; },
     set currentTime(value) { time = value; this.seeks += 1; this.seeking = true; this.ended = false; },
@@ -55,6 +55,7 @@ async function page(initial = {}, videos = [fakeVideo()]) {
   let nextCallback = 0;
   const context = vm.createContext({
     console,
+    URL,
     document: { documentElement: {}, URL: "https://www.example.com/watch?v=1", querySelectorAll: () => videos },
     addEventListener: (name, handler) => navigation.set(name, handler),
     setTimeout(callback) { timers.set(++nextCallback, callback); return nextCallback; },
@@ -509,4 +510,137 @@ test("loop shortcuts use the existing main-frame message path without audio capt
     assert.equal(call.message.target, "video");
     assert.equal(call.options.frameId, 0);
   }
+});
+
+test("bookmark capture reads the latest time and keeps a paused video paused", async () => {
+  const video = fakeVideo({ paused: true });
+  const current = await page({ playbackRate: 3 }, [video]);
+  const state = await current.send({ type: "snapshot" });
+  assert.equal(state.bookmarkKey, "media:https://example.com/video.mp4");
+  video.advance(15.125);
+  const point = await current.send({ type: "captureBookmark", key: state.bookmarkKey });
+  assert.equal(point.time, 15.125);
+  assert.equal(point.key, "media:https://example.com/video.mp4");
+  assert.equal(video.plays, 0);
+  assert.equal(video.seeks, 0);
+  assert.equal(video.playbackRate, 3);
+  assert.deepEqual(current.stored, { playbackRate: 3 });
+});
+
+test("direct media identities follow stable source URLs and decline unsupported sources and unloaded media", async () => {
+  const current = await page();
+  const video = current.videos[0];
+  current.context.document.URL = "https://example.com/player";
+  video.fire("loadedmetadata");
+  assert.equal((await current.send({ type: "snapshot" })).bookmarkKey, "media:https://example.com/video.mp4");
+  for (const source of ["", "data:video/mp4;base64,abc"]) {
+    video.currentSrc = source;
+    video.fire("loadedmetadata");
+    assert.equal((await current.send({ type: "snapshot" })).bookmarkKey, null);
+    await assert.rejects(current.send({ type: "captureBookmark", key: "old" }), /stable video address/);
+  }
+  video.currentSrc = "https://example.com/video.mp4";
+  video.readyState = 0;
+  assert.equal((await current.send({ type: "snapshot" })).bookmarkKey, null);
+  video.readyState = 4;
+  video.duration = Infinity;
+  assert.equal((await current.send({ type: "snapshot" })).bookmarkKey, null);
+});
+
+test("temporary video sources use a persistent page identity across source reloads", async () => {
+  const current = await page({}, [fakeVideo({ paused: true })]);
+  const video = current.videos[0];
+  current.context.document.URL = "https://example.com/watch?id=10&episode=5#time";
+  video.currentSrc = "blob:https://example.com/first-session";
+  video.fire("loadedmetadata");
+  const key = (await current.send({ type: "snapshot" })).bookmarkKey;
+  assert.equal(key, "page:https://example.com/watch?episode=5&id=10");
+  video.advance(51.5);
+  assert.equal((await current.send({ type: "captureBookmark", key })).time, 51.5);
+  video.fire("loadstart");
+  video.currentSrc = "blob:https://example.com/next-session";
+  await assert.rejects(current.send({ type: "seekBookmark", key, time: 51.5 }), /new video/);
+  video.fire("loadedmetadata");
+  assert.equal((await current.send({ type: "snapshot" })).bookmarkKey, key);
+  await current.send({ type: "seekBookmark", key, time: 51.5 });
+  assert.equal(video.currentTime, 51.5);
+  assert.equal(video.paused, true);
+  assert.equal(video.plays, 0);
+  const reloaded = fakeVideo({ paused: true });
+  reloaded.currentSrc = "blob:https://example.com/another-session";
+  const reopened = await page({}, [reloaded]);
+  reopened.context.document.URL = "https://example.com/watch?episode=5&id=10";
+  reloaded.fire("loadedmetadata");
+  assert.equal((await reopened.send({ type: "snapshot" })).bookmarkKey, key);
+});
+
+test("page bookmark identities distinguish content parameters and hash routes", async () => {
+  const current = await page();
+  const video = current.videos[0];
+  video.currentSrc = "blob:https://example.com/session";
+  current.context.document.URL = "https://example.com/watch?episode=1";
+  video.fire("loadedmetadata");
+  const key = (await current.send({ type: "snapshot" })).bookmarkKey;
+  current.context.document.URL = "https://example.com/watch?episode=2";
+  assert.equal((await current.send({ type: "snapshot" })).bookmarkKey, null);
+  await assert.rejects(current.send({ type: "seekBookmark", key, time: 10 }), /new video/);
+  video.fire("loadedmetadata");
+  assert.notEqual((await current.send({ type: "snapshot" })).bookmarkKey, key);
+  current.context.document.URL = "https://example.com/#/watch/1";
+  video.fire("loadedmetadata");
+  const route = (await current.send({ type: "snapshot" })).bookmarkKey;
+  current.context.document.URL = "https://example.com/#/watch/2";
+  video.fire("loadedmetadata");
+  assert.notEqual((await current.send({ type: "snapshot" })).bookmarkKey, route);
+});
+
+test("page identity fallback declines ambiguous pages with several videos", async () => {
+  const one = fakeVideo();
+  const two = fakeVideo();
+  one.currentSrc = "blob:https://example.com/first";
+  two.currentSrc = "blob:https://example.com/second";
+  const current = await page({}, [one, two]);
+  current.context.document.URL = "https://example.com/watch";
+  one.fire("loadedmetadata");
+  two.fire("loadedmetadata");
+  assert.equal((await current.send({ type: "snapshot" })).bookmarkKey, null);
+});
+
+test("bookmark seeks preserve pause, speed and pitch and clear a loop only when jumping outside it", async () => {
+  const video = fakeVideo({ paused: true });
+  const current = await page({ playbackRate: 3, sliderValue: 2 }, [video]);
+  await selectLoop(current, 10, 20);
+  const inside = await current.send({ type: "seekBookmark", key: "media:https://example.com/video.mp4", time: 15 });
+  assert.equal(inside.loop.active, true);
+  assert.equal(video.currentTime, 15);
+  video.fire("seeked");
+  const outside = await current.send({ type: "seekBookmark", key: "media:https://example.com/video.mp4", time: 30 });
+  assert.equal(outside.loop.active, false);
+  assert.equal(video.currentTime, 30);
+  assert.equal(video.paused, true);
+  assert.equal(video.plays, 0);
+  assert.equal(video.playbackRate, 3);
+  assert.equal(video.preservesPitch, true);
+  assert.deepEqual(current.stored, { playbackRate: 3, sliderValue: 2 });
+});
+
+test("invalid, unavailable and stale bookmark seeks fail without moving playback", async () => {
+  const current = await page();
+  const video = current.videos[0];
+  for (const time of [NaN, Infinity, -1, 121, "10"]) {
+    await assert.rejects(current.send({ type: "seekBookmark", key: "media:https://example.com/video.mp4", time }), /duration/);
+  }
+  video.seekable.length = 0;
+  await assert.rejects(current.send({ type: "seekBookmark", key: "media:https://example.com/video.mp4", time: 10 }), /seekable/);
+  video.seekable.length = 1;
+  video.seeking = true;
+  await assert.rejects(current.send({ type: "seekBookmark", key: "media:https://example.com/video.mp4", time: 10 }), /seek to finish/);
+  await assert.rejects(current.send({ type: "captureBookmark", key: "media:https://example.com/video.mp4" }), /seek to finish/);
+  video.seeking = false;
+  current.navigate();
+  assert.equal((await current.send({ type: "snapshot" })).bookmarkKey, null);
+  await assert.rejects(current.send({ type: "captureBookmark", key: "media:https://example.com/video.mp4" }), /new video/);
+  video.fire("loadedmetadata");
+  assert.equal((await current.send({ type: "captureBookmark", key: "media:https://example.com/video.mp4" })).time, 0);
+  assert.equal(video.seeks, 0);
 });

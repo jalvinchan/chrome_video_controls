@@ -209,3 +209,41 @@ test("invalid loop actions show errors in A–B repeat and preserve volume statu
     assert.equal(view.loopStatus.hidden, true);
   });
 });
+
+test("bookmarks render notes safely, keep drafts across refreshes, and route jumps and removals by video", () => {
+  withDocument((view) => {
+    const state = { ...idle, video: { available: true, rate: 1 }, bookmarks: { key: "media:1", items: [] } };
+    const saved = [];
+    const jumped = [];
+    const removed = [];
+    view.render(state);
+    view.bind({ onBookmarkSave: (note) => saved.push(note), onBookmarkSeek: (item) => jumped.push(item), onBookmarkRemove: (item) => removed.push(item) });
+    assert.equal(view.bookmarkSave.disabled, false);
+    view.bookmarkNote.value = "My draft";
+    view.update({ ...state, sliderValue: 2 });
+    assert.equal(view.bookmarkNote.value, "My draft");
+    view.bookmarkSave.listeners.click();
+    assert.deepEqual(saved, ["My draft"]);
+    const item = { id: "one", time: 15.5, note: "<img src=x onerror=alert(1)>" };
+    view.update({ ...state, bookmarks: { key: "media:1", items: [item] } });
+    const jump = view.bookmarkList.children[0].children[0];
+    assert.equal(jump.children[1].children[0], item.note);
+    jump.listeners.click();
+    view.bookmarkList.children[0].children[1].listeners.click();
+    assert.equal(jumped[0].key, "media:1");
+    assert.equal(jumped[0].time, 15.5);
+    assert.equal(removed[0].id, "one");
+    view.setBookmarkStatus({ message: "Couldn't save bookmark", tone: "error" });
+    view.setBookmarkBusy(false);
+    assert.equal(view.bookmarkStatus.hidden, false);
+    assert.equal(view.bookmarkStatus.dataset.tone, "error");
+    assert.equal(view.status.hidden, true);
+    assert.equal(view.bookmarkNote.value, "My draft");
+    view.update({ ...state, bookmarks: { key: "media:2", items: [] } });
+    assert.equal(view.bookmarkNote.value, "");
+    assert.equal(view.bookmarkStatus.textContent, "No bookmarks yet.");
+    view.update({ ...state, bookmarks: { key: null, items: [] } });
+    assert.equal(view.bookmarkSave.disabled, true);
+    assert.equal(view.bookmarkNote.disabled, true);
+  });
+});
