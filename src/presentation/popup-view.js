@@ -1,10 +1,15 @@
-import { MAX_PERCENT, MIN_PERCENT } from "../model/gain-level.js";
+import { GainLevel, LEVEL_STEP, MAX_LEVEL, MIN_LEVEL } from "../model/gain-level.js";
+import { DEFAULT_RATE, MAX_RATE, MIN_RATE, RATE_STEP, playbackRate } from "../model/playback-rate.js";
 
 export class PopupView {
   constructor(root) {
     this.root = root;
     this.onToggle = () => {};
     this.onLevel = () => {};
+    this.onSpeed = () => {};
+    this.onReset = () => {};
+    this.onShortcuts = () => {};
+    this.onRefresh = () => {};
     this.busy = false;
     this.state = null;
     this.statusMessage = null;
@@ -13,37 +18,111 @@ export class PopupView {
     this.tab = null;
     this.status = null;
     this.button = null;
+    this.speedSlider = null;
+    this.speedNumber = null;
+    this.speedReadout = null;
+    this.speedStatus = null;
+    this.speedPresets = [];
+    this.resetButton = null;
+    this.dragging = new Set();
+    this.editingSpeed = false;
   }
 
   bind(handlers) {
     this.onToggle = handlers.onToggle ?? (() => {});
     this.onLevel = handlers.onLevel ?? (() => {});
+    this.onSpeed = handlers.onSpeed ?? (() => {});
+    this.onReset = handlers.onReset ?? (() => {});
+    this.onShortcuts = handlers.onShortcuts ?? (() => {});
+    this.onRefresh = handlers.onRefresh ?? (() => {});
   }
 
   render(state) {
     this.slider = h("input", {
       type: "range",
-      min: String(MIN_PERCENT),
-      max: String(MAX_PERCENT),
-      step: "5",
+      min: String(MIN_LEVEL),
+      max: String(MAX_LEVEL),
+      step: String(LEVEL_STEP),
       "aria-label": "Gain",
     });
     this.readout = h("p", { class: "readout" });
     this.tab = h("p", { class: "tab" });
     this.status = h("p", { class: "status", role: "status", "aria-live": "polite" });
     this.button = h("button", { class: "primary", type: "button" });
+    this.speedSlider = h("input", {
+      type: "range", min: String(MIN_RATE), max: String(MAX_RATE), step: String(RATE_STEP),
+      "aria-label": "Playback speed",
+    });
+    for (const slider of [this.slider, this.speedSlider]) {
+      slider.addEventListener("pointerdown", () => this.dragging.add(slider));
+      for (const event of ["pointerup", "pointercancel", "lostpointercapture", "blur"]) {
+        slider.addEventListener(event, () => {
+          if (this.dragging.delete(slider)) this.onRefresh();
+        });
+      }
+    }
+    this.speedNumber = h("input", {
+      type: "number", min: String(MIN_RATE), max: String(MAX_RATE), step: String(RATE_STEP),
+      "aria-label": "Custom playback speed", class: "speed-number",
+    });
+    this.speedReadout = h("p", { class: "readout" });
+    this.speedStatus = h("p", { class: "note", role: "status", "aria-live": "polite" });
+    this.speedPresets = [1, 1.5, 2, 3].map((rate) => {
+      const button = h("button", { type: "button", "aria-label": `Set speed to ${rate}×` }, `${rate}×`);
+      button.addEventListener("click", () => this.onSpeed(rate));
+      return { rate, button };
+    });
+    this.speedSlider.addEventListener("input", () => {
+      this.speedNumber.value = this.speedSlider.value;
+      this.#paintSpeed();
+      this.onSpeed(Number(this.speedSlider.value));
+    });
+    this.speedNumber.addEventListener("change", () => {
+      this.editingSpeed = false;
+      const rate = Number(this.speedNumber.value);
+      if (!this.speedNumber.value || !Number.isFinite(rate) || rate < MIN_RATE || rate > MAX_RATE) {
+        this.speedNumber.value = this.speedSlider.value;
+        this.speedStatus.textContent = "Enter a speed between 0.25× and 4×.";
+        this.speedStatus.hidden = false;
+        return;
+      }
+      const normalized = playbackRate(rate);
+      this.speedNumber.value = String(normalized);
+      this.speedSlider.value = String(normalized);
+      this.#paintSpeed();
+      this.onSpeed(normalized);
+    });
+    this.speedNumber.addEventListener("input", () => { this.editingSpeed = true; });
+    this.speedNumber.addEventListener("blur", () => {
+      this.editingSpeed = false;
+      this.onRefresh();
+    });
+    this.resetButton = h("button", { type: "button" }, "Reset controls");
+    this.resetButton.addEventListener("click", () => this.onReset());
+    const shortcutsButton = h("button", { type: "button" }, "Shortcuts");
+    shortcutsButton.addEventListener("click", () => this.onShortcuts());
     this.slider.addEventListener("input", () => {
-      this.readout.textContent = `${this.slider.value}%`;
+      this.#paintLevel();
       this.onLevel(Number(this.slider.value));
     });
     this.button.addEventListener("click", () => this.onToggle());
 
     this.root.replaceChildren(h("div", { class: "popup" },
-      h("div", { class: "popup-brand" }, mark(), h("h1", {}, "Amplifier")),
+      h("div", { class: "popup-brand" }, mark(), h("h1", {}, "Video Controls")),
       this.tab,
+      h("section", { class: "control-section", "aria-label": "Video speed" },
+        h("h2", {}, "Speed"),
+        h("div", { class: "speed-heading" }, this.speedReadout, this.speedNumber),
+        this.speedSlider,
+        h("div", { class: "presets" }, this.speedPresets.map(({ button }) => button)),
+        this.speedStatus,
+      ),
+      h("h2", {}, "Volume boost"),
       h("div", { class: "level" }, this.readout, this.slider),
       this.button,
       this.status,
+      h("div", { class: "footer-actions" }, this.resetButton, shortcutsButton),
+      h("p", { class: "note" }, "Speed: Alt + Shift + ← / →. Volume: Alt + Shift + ↓ / ↑. On Mac, Alt is Option."),
       h("p", { class: "note" }, "Chrome shows a sharing indicator while a tab is amplified. Audio is not recorded."),
     ));
     this.update(state);
@@ -53,8 +132,18 @@ export class PopupView {
     this.state = state;
     if (!this.slider) return;
     this.tab.textContent = state.currentTitle || "This tab";
-    if (document.activeElement !== this.slider) this.slider.value = String(state.percent);
-    this.readout.textContent = `${this.slider.value}%`;
+    if (!this.dragging.has(this.slider)) this.slider.value = String(state.sliderValue);
+    this.#paintLevel();
+    const video = state.video ?? { rate: DEFAULT_RATE, available: false };
+    if (!this.dragging.has(this.speedSlider)) this.speedSlider.value = String(video.rate);
+    if (!this.editingSpeed) this.speedNumber.value = String(video.rate);
+    this.#paintSpeed();
+    this.speedSlider.disabled = Boolean(video.error);
+    this.speedNumber.disabled = Boolean(video.error);
+    for (const { button } of this.speedPresets) button.disabled = Boolean(video.error);
+    this.speedStatus.textContent = video.error || (video.available ? "" : "No video found.");
+    this.speedStatus.hidden = !this.speedStatus.textContent;
+    this.resetButton.disabled = this.busy;
     const onThisTab = state.live && state.tabId === state.currentTabId;
     if (onThisTab || (state.blocked && state.live)) this.button.textContent = "Stop";
     else this.button.textContent = "Amplify this tab";
@@ -64,6 +153,7 @@ export class PopupView {
 
   setBusy(busy) {
     this.busy = busy;
+    if (this.resetButton) this.resetButton.disabled = busy;
     if (!this.button || !this.state) return;
     this.button.disabled = busy || (Boolean(this.state.blocked) && !this.state.live);
   }
@@ -76,31 +166,59 @@ export class PopupView {
       return;
     }
     this.status.textContent = status.message;
+    this.status.hidden = false;
     this.status.dataset.tone = status.tone || "ok";
+  }
+
+  #paintLevel() {
+    const label = levelLabel(Number(this.slider.value));
+    this.readout.textContent = label;
+    this.slider.setAttribute("aria-valuetext", label);
+  }
+
+  #paintSpeed() {
+    const rate = Number(this.speedSlider.value);
+    const label = `${rate}×`;
+    this.speedReadout.textContent = label;
+    this.speedSlider.setAttribute("aria-valuetext", label);
+    for (const preset of this.speedPresets) {
+      preset.button.setAttribute("aria-pressed", String(preset.rate === rate));
+    }
   }
 
   #paintStatus(state) {
     if (!state || !this.status) return;
+    this.status.hidden = false;
     if (state.blocked && !state.live) {
       this.status.textContent = state.blocked;
       this.status.dataset.tone = "warn";
       return;
     }
     if (state.live && state.tabId === state.currentTabId) {
-      this.status.textContent = `This tab is playing at ${state.percent}%.`;
+      this.status.textContent = "";
+      this.status.hidden = true;
       this.status.dataset.tone = "ok";
       return;
     }
     if (state.live) {
       const where = state.title ? `${state.title} is` : "Another tab is";
       const tail = state.blocked ? "" : " Amplifying here switches to this tab.";
-      this.status.textContent = `${where} playing at ${state.percent}%.${tail}`;
+      this.status.textContent = state.sliderValue === 0
+        ? `${where} muted.${tail}`
+        : `${where} playing with ${levelLabel(state.sliderValue)} gain.${tail}`;
       this.status.dataset.tone = "warn";
       return;
     }
-    this.status.textContent = "100% is this tab's own volume. Stop hands it back to Chrome.";
+    this.status.textContent = "";
+    this.status.hidden = true;
     this.status.dataset.tone = "";
   }
+}
+
+function levelLabel(sliderValue) {
+  const level = new GainLevel(sliderValue);
+  if (level.sliderValue === 0) return "Mute";
+  return `${level.decibels > 0 ? "+" : ""}${level.decibels} dB`;
 }
 
 function mark() {

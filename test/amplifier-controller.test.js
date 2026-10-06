@@ -41,7 +41,7 @@ class FakeStage {
   constructor({ open = false } = {}) {
     this.opened = open;
     this.playing = null;
-    this.percent = null;
+    this.sliderValue = null;
     this.halted = 0;
     this.failPlay = null;
   }
@@ -57,12 +57,12 @@ class FakeStage {
   async play(streamId, level) {
     if (this.failPlay) throw new Error(this.failPlay);
     this.playing = streamId;
-    this.percent = level.percent;
+    this.sliderValue = level.sliderValue;
   }
 
   async setGain(level) {
     if (!this.playing) throw new Error("not running");
-    this.percent = level.percent;
+    this.sliderValue = level.sliderValue;
   }
 
   async halt() {
@@ -86,10 +86,10 @@ function setup(stored = {}, stage = new FakeStage()) {
 const videoTab = { id: 7, url: "https://www.example.com/watch?v=1", title: "Lo-fi" };
 
 test("starting a tab plays it at the remembered level and does not recapture it", async () => {
-  const { controller, capture, stage, storage } = setup({ percent: 150 });
+  const { controller, capture, stage, storage } = setup({ sliderValue: 1.5 });
   const started = await controller.start(videoTab);
   assert.equal(started.live, true);
-  assert.equal(started.percent, 150);
+  assert.equal(started.sliderValue, 1.5);
   assert.equal(started.title, "Lo-fi");
   assert.equal(stage.playing, "stream-7");
   assert.equal(storage.snapshot().tabId, 7);
@@ -111,10 +111,43 @@ test("a second tab replaces the first, and stop returns audio to Chrome", async 
 
   const stopped = await controller.stop();
   assert.equal(stopped.live, false);
-  assert.equal(stopped.percent, 200);
+  assert.equal(stopped.sliderValue, 1);
   assert.equal(stage.playing, null);
   assert.equal(storage.snapshot().tabId, null);
-  assert.equal(storage.snapshot().percent, undefined);
+  assert.equal(storage.snapshot().sliderValue, 1);
+});
+
+test("stop resets boosted and muted levels to the default and persists it", async () => {
+  for (const sliderValue of [3, 0]) {
+    const { controller, stage, storage } = setup();
+    await controller.start(videoTab);
+    await controller.setLevel(sliderValue);
+
+    const stopped = await controller.stop();
+    assert.equal(stopped.live, false);
+    assert.equal(stopped.sliderValue, 1);
+    assert.equal(stage.playing, null);
+    assert.equal(storage.snapshot().sliderValue, 1);
+
+    const restarted = setup(storage.snapshot());
+    assert.equal((await restarted.controller.snapshot()).sliderValue, 1);
+    await restarted.controller.start(videoTab);
+    assert.equal(restarted.stage.sliderValue, 1);
+  }
+});
+
+test("stop resets an idle level, while switching tabs keeps the selected gain", async () => {
+  const { controller, stage, storage } = setup({ sliderValue: 2.5 });
+  await controller.start(videoTab);
+  const switched = await controller.start({ id: 8, url: "https://example.com", title: "Talk" });
+  assert.equal(switched.sliderValue, 2.5);
+  assert.equal(stage.sliderValue, 2.5);
+
+  await controller.stop();
+  await controller.setLevel(0);
+  const stopped = await controller.stop();
+  assert.equal(stopped.sliderValue, 1);
+  assert.equal(storage.snapshot().sliderValue, 1);
 });
 
 test("browser pages are refused before capture, and a failed capture is rolled back", async () => {
@@ -135,16 +168,36 @@ test("browser pages are refused before capture, and a failed capture is rolled b
 
 test("the slider changes a live tab and is remembered while idle", async () => {
   const { controller, stage, storage } = setup();
-  const idle = await controller.setLevel(80);
+  const idle = await controller.setLevel(0.5);
   assert.equal(idle.live, false);
-  assert.equal(idle.percent, 80);
-  assert.equal(stage.percent, null);
+  assert.equal(idle.sliderValue, 0.5);
+  assert.equal(stage.sliderValue, null);
 
   await controller.start(videoTab);
-  const live = await controller.setLevel(320);
-  assert.equal(live.percent, 320);
-  assert.equal(stage.percent, 320);
-  assert.equal(storage.snapshot().percent, 320);
+  const live = await controller.setLevel(3);
+  assert.equal(live.sliderValue, 3);
+  assert.equal(stage.sliderValue, 3);
+  assert.equal(storage.snapshot().sliderValue, 3);
+
+  const muted = await controller.setLevel(0);
+  assert.equal(muted.live, true);
+  assert.equal(muted.sliderValue, 0);
+  assert.equal(stage.sliderValue, 0);
+  assert.equal(storage.snapshot().sliderValue, 0);
+});
+
+test("legacy percentages reset to unity and new slider settings persist", async () => {
+  const { controller, storage } = setup({ percent: 200 });
+  assert.equal((await controller.snapshot()).sliderValue, 1);
+  await controller.setLevel(2.5);
+  assert.equal(storage.snapshot().sliderValue, 2.5);
+  const restarted = setup(storage.snapshot()).controller;
+  assert.equal((await restarted.snapshot()).sliderValue, 2.5);
+
+  const muted = setup({ sliderValue: 0 }).controller;
+  assert.equal((await muted.snapshot()).sliderValue, 0);
+  const invalid = setup({ sliderValue: Number.NaN }).controller;
+  assert.equal((await invalid.snapshot()).sliderValue, 1);
 });
 
 test("closing the amplified tab releases it, and a dead offscreen document is forgotten", async () => {
@@ -162,12 +215,12 @@ test("closing the amplified tab releases it, and a dead offscreen document is fo
   assert.equal(snapshot.live, false);
 
   const stillOpen = setup(
-    { percent: 180, tabId: 7, title: "Lo-fi" },
+    { sliderValue: 2, tabId: 7, title: "Lo-fi" },
     new FakeStage({ open: true }),
   );
   const recovered = await stillOpen.controller.snapshot();
   assert.equal(recovered.live, true);
-  assert.equal(recovered.percent, 180);
+  assert.equal(recovered.sliderValue, 2);
   assert.equal(recovered.title, "Lo-fi");
 });
 
@@ -175,6 +228,8 @@ test("popup messages reach the controller and surface background errors", async 
   const { controller } = setup();
   const started = await handleAmplifierMessage(controller, { type: "start", tab: videoTab });
   assert.equal(started.live, true);
+  const level = await handleAmplifierMessage(controller, { type: "setLevel", sliderValue: 2.5 });
+  assert.equal(level.sliderValue, 2.5);
   const ended = await handleAmplifierMessage(controller, { type: "captureEnded" });
   assert.equal(ended.live, false);
 

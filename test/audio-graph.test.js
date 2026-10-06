@@ -63,37 +63,39 @@ function fakeContext() {
   };
 }
 
-test("playback boosts the tab and limits only the peaks", async () => {
+test("playback applies decibel gain before the retained compressor", async () => {
   const context = fakeContext();
   const graph = new AudioGraph(context);
   const stream = { id: "tab" };
-  await graph.start(stream, new GainLevel(250));
+  await graph.start(stream, new GainLevel(3));
 
   assert.equal(graph.source.stream, stream);
-  assert.equal(graph.gain.gain.value, 2.5);
+  assert.equal(graph.gain.gain.value, 10);
   assert.deepEqual(graph.source.connections, [graph.gain]);
   assert.deepEqual(graph.gain.connections, [graph.compressor]);
   assert.deepEqual(graph.compressor.connections, [context.destination]);
   assert.equal(graph.compressor.threshold.value, -1);
   assert.equal(graph.compressor.ratio.value, 20);
 
-  graph.setGain(new GainLevel(100));
+  graph.setGain(new GainLevel(1));
   assert.deepEqual(graph.gain.gain.events, [{ next: 1, time: 4, constant: 0.015 }]);
+  graph.setGain(new GainLevel(0));
+  assert.deepEqual(graph.gain.gain.events.at(-1), { next: 0, time: 4, constant: 0.015 });
 });
 
 test("a suspended context is resumed before the tab is connected", async () => {
   const context = fakeContext();
   context.state = "suspended";
   const graph = new AudioGraph(context);
-  await graph.start({}, new GainLevel(100));
+  await graph.start({}, new GainLevel(1));
   assert.equal(context.state, "running");
 });
 
 test("gain cannot change before playback, and stop closes the context", async () => {
   const context = fakeContext();
   const graph = new AudioGraph(context);
-  assert.throws(() => graph.setGain(new GainLevel(100)), /not running/);
-  await graph.start({}, new GainLevel(100));
+  assert.throws(() => graph.setGain(new GainLevel(1)), /not running/);
+  await graph.start({}, new GainLevel(1));
   const source = graph.source;
   await graph.stop();
   assert.equal(source.connections.length, 0);

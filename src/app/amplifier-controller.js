@@ -48,15 +48,17 @@ export class AmplifierController {
 
   stop() {
     return this.#enqueue(async () => {
-      if (!this.session.live) return this.session.toJSON();
-      await this.#release();
+      if (this.session.live) await this.#release();
+      const level = GainLevel.default();
+      this.session = this.session.withLevel(level);
+      await this.repository.saveLevel(level);
       return this.session.toJSON();
     });
   }
 
-  setLevel(percent) {
+  setLevel(sliderValue) {
     return this.#enqueue(async () => {
-      const level = new GainLevel(percent);
+      const level = new GainLevel(sliderValue);
       if (this.session.live) await this.stage.setGain(level);
       this.session = this.session.withLevel(level);
       await this.repository.saveLevel(level);

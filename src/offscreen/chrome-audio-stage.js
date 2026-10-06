@@ -40,7 +40,7 @@ export class ChromeAudioStage extends AudioStage {
       type: OffscreenMessage.play,
       target: "offscreen",
       streamId,
-      percent: level.percent,
+      sliderValue: level.sliderValue,
     });
   }
 
@@ -48,7 +48,7 @@ export class ChromeAudioStage extends AudioStage {
     await this.#send({
       type: OffscreenMessage.applyLevel,
       target: "offscreen",
-      percent: level.percent,
+      sliderValue: level.sliderValue,
     });
   }
 

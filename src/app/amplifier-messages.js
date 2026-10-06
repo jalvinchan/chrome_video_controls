@@ -9,7 +9,7 @@ export async function handleAmplifierMessage(app, message) {
     case AmplifierMessage.stop:
       return app.stop();
     case AmplifierMessage.setLevel:
-      return app.setLevel(message.percent);
+      return app.setLevel(message.sliderValue);
     case AmplifierMessage.captureEnded:
       return app.captureEnded();
     default:

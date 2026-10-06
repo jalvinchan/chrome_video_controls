@@ -72,8 +72,8 @@ test("playback stops the previous stream and notifies when the tab ends", async 
     ended += 1;
   };
 
-  await session.play("one", new GainLevel(200));
-  await session.play("two", new GainLevel(100));
+  await session.play("one", new GainLevel(2));
+  await session.play("two", new GainLevel(1));
   assert.equal(streams[0].track.stopped, true);
   assert.equal(graphs[0].stopped, true);
   assert.equal(graphs[1].started, streams[1]);
@@ -98,10 +98,10 @@ test("a failed open does not leave a live graph", async () => {
     },
     graphFactory: () => graph,
   });
-  await assert.rejects(session.play("x", new GainLevel(100)), /open tab audio: denied/);
+  await assert.rejects(session.play("x", new GainLevel(1)), /open tab audio: denied/);
   assert.equal(graph.stopped, true);
   await assert.rejects(
-    handleOffscreenMessage(session, { type: "applyLevel", percent: 100 }),
+    handleOffscreenMessage(session, { type: "applyLevel", sliderValue: 1 }),
     /not running/,
   );
 });
@@ -129,14 +129,20 @@ test("the chrome stage asks an offscreen document to play the stream id", async 
     },
   };
   const stage = new ChromeAudioStage(chrome);
-  await stage.play("stream-7", new GainLevel(180));
+  await stage.play("stream-7", new GainLevel(2.5));
   assert.equal(docs[0].url, "src/presentation/offscreen.html");
   assert.deepEqual(docs[0].reasons, ["USER_MEDIA", "AUDIO_PLAYBACK"]);
   assert.deepEqual(sent[0], {
     type: "play",
     target: "offscreen",
     streamId: "stream-7",
-    percent: 180,
+    sliderValue: 2.5,
+  });
+  await stage.setGain(new GainLevel(0));
+  assert.deepEqual(sent.at(-1), {
+    type: "applyLevel",
+    target: "offscreen",
+    sliderValue: 0,
   });
   await stage.halt();
   assert.equal(docs.length, 0);

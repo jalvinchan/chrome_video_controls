@@ -1,5 +1,5 @@
-// Peaks are limited just under full scale. At 100% almost nothing hits it;
-// above that, a boost clamps instead of turning into hard clipping.
+// High-ratio compression reduces loud peaks after gain. This is not a strict
+// output ceiling; attack behavior and automatic makeup gain can affect peaks.
 const LIMITER = Object.freeze({
   threshold: -1,
   knee: 0,

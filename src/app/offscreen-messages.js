@@ -4,10 +4,10 @@ import { OffscreenMessage } from "../model/message-kinds.js";
 export async function handleOffscreenMessage(session, message) {
   switch (message?.type) {
     case OffscreenMessage.play:
-      await session.play(message.streamId, new GainLevel(message.percent));
+      await session.play(message.streamId, new GainLevel(message.sliderValue));
       return null;
     case OffscreenMessage.applyLevel:
-      session.setGain(new GainLevel(message.percent));
+      session.setGain(new GainLevel(message.sliderValue));
       return null;
     case OffscreenMessage.halt:
       await session.halt();

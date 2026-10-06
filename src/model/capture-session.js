@@ -23,7 +23,7 @@ export class CaptureSession {
       live: this.live,
       tabId: this.tabId,
       title: this.title,
-      percent: this.level.percent,
+      sliderValue: this.level.sliderValue,
     };
   }
 }

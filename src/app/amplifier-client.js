@@ -17,8 +17,8 @@ export class AmplifierClient {
     return this.#send({ type: AmplifierMessage.stop });
   }
 
-  setLevel(percent) {
-    return this.#send({ type: AmplifierMessage.setLevel, percent });
+  setLevel(sliderValue) {
+    return this.#send({ type: AmplifierMessage.setLevel, sliderValue });
   }
 
   async #send(message) {

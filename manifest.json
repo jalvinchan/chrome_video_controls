@@ -1,21 +1,51 @@
 {
   "manifest_version": 3,
-  "name": "Amplifier",
-  "version": "1.0.0",
-  "description": "Play the current tab louder. Audio stays in this browser.",
+  "name": "Video Controls",
+  "version": "1.1.0",
+  "description": "Control video speed and boost tab volume. Audio stays in this browser.",
   "minimum_chrome_version": "116",
   "permissions": [
     "tabCapture",
     "offscreen",
     "storage",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
+  "commands": {
+    "speed-up": {
+      "suggested_key": {
+        "default": "Alt+Shift+Right"
+      },
+      "description": "Increase video speed by 0.25\u00d7"
+    },
+    "speed-down": {
+      "suggested_key": {
+        "default": "Alt+Shift+Left"
+      },
+      "description": "Decrease video speed by 0.25\u00d7"
+    },
+    "volume-up": {
+      "suggested_key": {
+        "default": "Alt+Shift+Up"
+      },
+      "description": "Amplify this tab and increase gain by one step"
+    },
+    "volume-down": {
+      "suggested_key": {
+        "default": "Alt+Shift+Down"
+      },
+      "description": "Amplify this tab and decrease gain by one step"
+    },
+    "reset-controls": {
+      "description": "Reset video speed to 1\u00d7 and gain to 0 dB"
+    }
+  },
   "background": {
     "service_worker": "src/entrypoint/background.js",
     "type": "module"
   },
   "action": {
-    "default_title": "Amplifier",
+    "default_title": "Video Controls",
     "default_popup": "src/presentation/popup.html",
     "default_icon": {
       "16": "icons/16.png",
